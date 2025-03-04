@@ -3,15 +3,15 @@
 axera QAT demo
 包含一个最小导出 demo 和一个 resnet50 训练 demo
 
----
 ## minimum export demo
-```
+
+```bash
 python3 -m minimum.minimum_demo
 ```
 
----
 ## resnet50 train
-```
+
+```bash
 # download imagenet dataset
 cd QAT.axera
 mkdir -p dataset/imagenet && cd dataset/imagenet
@@ -28,6 +28,11 @@ cd QAT.axera
 mkdir -p resnet50/checkpoint
 python3 -m resnet50.train
 
-# test 
+# test
 cd QAT.axera
 python3 -m resnet50.test
+```
+
+## Validate on board
+
+[请点击查看上板测试文档。](pulsar2/README.md)
