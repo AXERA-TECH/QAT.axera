@@ -24,5 +24,5 @@ pulsar2 build --config config.json --input resnet50_qat_sim.onnx --output_dir ou
 
 | 模型 | 验证集规模 | top1 | top5 |
 | --- | --- | --- | --- |
-| 浮点模型 | 50000 | 72.638 | 91.378 |
-| QAT 模型 | 50000 | 72.634 | 91.324 |
+| QAT 模型 <br> ONNX Runtime 推理 | 50000 | 72.638 | 91.378 |
+| Compiled AXModel 模型 <br> AXEngine 推理 | 50000 | 72.634 | 91.324 |
