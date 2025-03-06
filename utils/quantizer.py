@@ -24,7 +24,7 @@ from torch.ao.quantization.observer import (
 )
 from torch.ao.quantization.quantizer import QuantizationSpec, Quantizer, DerivedQuantizationSpec
 from torch.ao.quantization.quantizer.utils import _get_module_name_filter
-from torch.ao.quantization.quantizer.xnnpack_quantizer_utils import (
+from utils.quantizer_utils import (
     _convert_scalars_to_attrs,
     OP_TO_ANNOTATOR,
     OperatorConfig,
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "TMPQuantizer",
+    "AXQuantizer",
     "get_symmetric_quantization_config",
     "get_quantization_config",
 ]
@@ -352,6 +352,7 @@ class AXQuantizer(Quantizer):
         "add",
         "mul_relu",
         "mul",
+        "silu",
         "cat",
     ]
 
