@@ -160,7 +160,7 @@ def run(
 
     # onnx session
     import onnxruntime as ort
-    sess = ort.InferenceSession("./yolov5s_qat.onnx")
+    sess = ort.InferenceSession("../../yolov5s_qat.onnx")
 
     # Directories
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
