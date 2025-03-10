@@ -332,7 +332,7 @@ def run(
     if not training:
         # onnx session
         import onnxruntime as ort
-        sess = ort.InferenceSession("./yolov5s_qat.onnx")
+        sess = ort.InferenceSession("../../yolov5s_qat.onnx")
     else:
         from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
         model = convert_pt2e(model)
