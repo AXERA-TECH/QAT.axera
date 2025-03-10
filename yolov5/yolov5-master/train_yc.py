@@ -226,7 +226,7 @@ def train(hyp, opt, device, callbacks):
 
     # from IPython import embed; embed()
     import onnx
-    from onnxslim import slim
+    from onnxsim import simplify
     from torch.ao.quantization.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
     from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
     from quantizer import AXQuantizer, get_quantization_config
@@ -243,7 +243,8 @@ def train(hyp, opt, device, callbacks):
         opset_version=18
     )
     onnx_model = onnx.load("./yolov5s_float.onnx")
-    model_simp = slim(onnx_model)
+    model_simp, check = simplify(onnx_model)
+    assert check, "Simplified ONNX model could not be validated"
     onnx.save(model_simp, "./yolov5s_float_sim.onnx")
     
     # Freeze
@@ -291,7 +292,7 @@ def train(hyp, opt, device, callbacks):
     #         best_fitness, start_epoch, epochs = smart_resume(ckpt, optimizer, ema, weights, epochs, resume)
     #     del ckpt, csd
 
-    # DP mode
+    # # DP mode
     # if cuda and RANK == -1 and torch.cuda.device_count() > 1:
     #     LOGGER.warning(
     #         "WARNING ⚠️ DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n"
@@ -332,12 +333,12 @@ def train(hyp, opt, device, callbacks):
         val_loader = create_dataloader(
             val_path,
             imgsz,
-            1,
+            batch_size // WORLD_SIZE * 2,
             gs,
             single_cls,
             hyp=hyp,
             cache=None if noval else opt.cache,
-            rect=False,
+            rect=True,
             rank=-1,
             workers=workers * 2,
             pad=0.5,
@@ -367,8 +368,6 @@ def train(hyp, opt, device, callbacks):
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
     compute_loss = ComputeLoss(model)  # init loss class
-    
-    Detect = model.model[-1]
 
     quantizer = AXQuantizer()
     quantizer.set_global(get_quantization_config(is_qat=True))
@@ -410,13 +409,13 @@ def train(hyp, opt, device, callbacks):
             best_fitness, start_epoch, epochs = smart_resume(ckpt, optimizer, ema, weights, epochs, resume)
         del ckpt, csd
 
-    # # DP mode
-    # if cuda and RANK == -1 and torch.cuda.device_count() > 1:
-    #     LOGGER.warning(
-    #         "WARNING ⚠️ DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n"
-    #         "See Multi-GPU Tutorial at https://docs.ultralytics.com/yolov5/tutorials/multi_gpu_training to get started."
-    #     )
-    #     model = torch.nn.DataParallel(model)
+    # DP mode
+    if cuda and RANK == -1 and torch.cuda.device_count() > 1:
+        LOGGER.warning(
+            "WARNING ⚠️ DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n"
+            "See Multi-GPU Tutorial at https://docs.ultralytics.com/yolov5/tutorials/multi_gpu_training to get started."
+        )
+        model = torch.nn.DataParallel(model)
 
     # Start training
     t0 = time.time()
@@ -460,7 +459,7 @@ def train(hyp, opt, device, callbacks):
             pbar = tqdm(pbar, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
-            if i >= 20000:
+            if i >= 10:
                 break
             callbacks.run("on_train_batch_start")
             ni = i + nb * epoch  # number integrated batches (since train start)
@@ -485,16 +484,7 @@ def train(hyp, opt, device, callbacks):
                     ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
                     imgs = nn.functional.interpolate(imgs, size=ns, mode="bilinear", align_corners=False)
 
-            # # Forward
-            # pred0 = []
-            # pred1 = []
-            # pred2 = []
-            # for i in range(batch_size):
-            #     pred = model(imgs[i].unsqueeze(0))
-            #     pred0.append(pred[0])
-            #     pred1.append(pred[1])
-            #     pred2.append(pred[2])
-            # pred = [torch.stack(pred0,0).squeeze(1),torch.stack(pred1,0).squeeze(1),torch.stack(pred2,0).squeeze(1)]
+            # Forward
             pred = model(imgs)  # forward
             loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
             if RANK != -1:
@@ -533,127 +523,102 @@ def train(hyp, opt, device, callbacks):
         lr = [x["lr"] for x in optimizer.param_groups]  # for loggers
         scheduler.step()
 
-            # if RANK in {-1, 0}:# and i %100 ==0 and i > 0:
-            #     # mAP
-            #     callbacks.run("on_train_epoch_end", epoch=epoch)
-            #     # ema.update_attr(model, include=["yaml", "nc", "hyp", "names", "stride", "class_weights"])
-            #     # final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
-            #     if not noval:# or final_epoch:  # Calculate mAP
-            #         results, maps, _ = validate.run(
-            #             data_dict,
-            #             batch_size=1,
-            #             imgsz=imgsz,
-            #             half=amp,
-            #             model=model,
-            #             single_cls=single_cls,
-            #             dataloader=val_loader,
-            #             save_dir=save_dir,
-            #             plots=None,
-            #             callbacks=callbacks,
-            #             compute_loss=None,
-            #             names=names,
-            #             detect =Detect
-            #         )
+        import copy
+        prepared_model_copy = copy.deepcopy(de_parallel(model))
+        quantized_model = convert_pt2e(prepared_model_copy)
+        onnx_program = torch.onnx.export(quantized_model, (inputs,), dynamo=True)
+        onnx_program.optimize()
+        onnx_program.save("./yolov5s_qat.onnx")
+        exit()
 
-            #     # Update best mAP
-            #     fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-            #     stop = stopper(epoch=epoch, fitness=fi)  # early stop check
-            #     if fi > best_fitness:
-            #         best_fitness = fi
-            #     log_vals = list(mloss) + list(results) + lr
-            #     callbacks.run("on_fit_epoch_end", log_vals, epoch, best_fitness, fi)
+        if RANK in {-1, 0}:
+            # mAP
+            callbacks.run("on_train_epoch_end", epoch=epoch)
+            ema.update_attr(model, include=["yaml", "nc", "hyp", "names", "stride", "class_weights"])
+            final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
+            # if not noval or final_epoch:  # Calculate mAP
+            #     results, maps, _ = validate.run(
+            #         data_dict,
+            #         batch_size=batch_size // WORLD_SIZE * 2,
+            #         imgsz=imgsz,
+            #         half=amp,
+            #         model=ema.ema,
+            #         single_cls=single_cls,
+            #         dataloader=val_loader,
+            #         save_dir=save_dir,
+            #         plots=False,
+            #         callbacks=callbacks,
+            #         compute_loss=compute_loss,
+            #     )
 
-                # # Save model
-                # if (not nosave) or (final_epoch and not evolve):  # if save
-                #     ckpt = {
-                #         "epoch": epoch,
-                #         "best_fitness": best_fitness,
-                #         "model": deepcopy(de_parallel(model)).half(),
-                #         "ema": deepcopy(ema.ema).half(),
-                #         "updates": ema.updates,
-                #         "optimizer": optimizer.state_dict(),
-                #         "opt": vars(opt),
-                #         "git": GIT_INFO,  # {remote, branch, commit} if a git repo
-                #         "date": datetime.now().isoformat(),
-                #     }
+            # Update best mAP
+            fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+            stop = stopper(epoch=epoch, fitness=fi)  # early stop check
+            if fi > best_fitness:
+                best_fitness = fi
+            log_vals = list(mloss) + list(results) + lr
+            callbacks.run("on_fit_epoch_end", log_vals, epoch, best_fitness, fi)
 
-                #     # Save last, best and delete
-                #     torch.save(model.state_dict(), last)
-                #     if best_fitness == fi:
-                #         torch.save(model.state_dict(), best)
-                #     if opt.save_period > 0 and epoch % opt.save_period == 0:
-                #         torch.save(model.state_dict(), w / f"epoch{epoch}.pt")
-                #     del ckpt
-                #     callbacks.run("on_model_save", last, epoch, final_epoch, best_fitness, fi)
+            # Save model
+            if (not nosave) or (final_epoch and not evolve):  # if save
+                ckpt = {
+                    "epoch": epoch,
+                    "best_fitness": best_fitness,
+                    "model": deepcopy(de_parallel(model)).half(),
+                    "ema": deepcopy(ema.ema).half(),
+                    "updates": ema.updates,
+                    "optimizer": optimizer.state_dict(),
+                    "opt": vars(opt),
+                    "git": GIT_INFO,  # {remote, branch, commit} if a git repo
+                    "date": datetime.now().isoformat(),
+                }
 
-            # # EarlyStopping
-            # if RANK != -1:  # if DDP training
-            #     broadcast_list = [stop if RANK == 0 else None]
-            #     dist.broadcast_object_list(broadcast_list, 0)  # broadcast 'stop' to all ranks
-            #     if RANK != 0:
-            #         stop = broadcast_list[0]
-            # if stop:
-            #     break  # must break all DDP ranks
+                # Save last, best and delete
+                torch.save(model.state_dict(), last)
+                if best_fitness == fi:
+                    torch.save(model.state_dict(), best)
+                if opt.save_period > 0 and epoch % opt.save_period == 0:
+                    torch.save(model.state_dict(), w / f"epoch{epoch}.pt")
+                del ckpt
+                callbacks.run("on_model_save", last, epoch, final_epoch, best_fitness, fi)
 
-    import copy
-    prepared_model_copy = copy.deepcopy(de_parallel(model))
-    quantized_model = convert_pt2e(prepared_model_copy)
-    onnx_program = torch.onnx.export(quantized_model, (inputs,), dynamo=True)
-    onnx_program.optimize()
-    onnx_program.save("./yolov5s_qat.onnx")
-    # exit()
+        # EarlyStopping
+        if RANK != -1:  # if DDP training
+            broadcast_list = [stop if RANK == 0 else None]
+            dist.broadcast_object_list(broadcast_list, 0)  # broadcast 'stop' to all ranks
+            if RANK != 0:
+                stop = broadcast_list[0]
+        if stop:
+            break  # must break all DDP ranks
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training -----------------------------------------------------------------------------------------------------
-    LOGGER.info(f"\nValidating ...")
-    results, _, _ = validate.run(
-        data_dict,
-        batch_size=1,
-        imgsz=imgsz,
-        model=de_parallel(model),
-        iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
-        single_cls=single_cls,
-        dataloader=val_loader,
-        save_dir=save_dir,
-        save_json=is_coco,
-        verbose=True,
-        plots=plots,
-        callbacks=callbacks,
-        compute_loss=None,
-        names=names,
-        detect =Detect
-    )  # val best model with plots
-    fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-    if is_coco:
-        callbacks.run("on_fit_epoch_end", list(mloss) + list(results) + lr, epoch, best_fitness, fi)
+    if RANK in {-1, 0}:
+        LOGGER.info(f"\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.")
+        for f in last, best:
+            if f.exists():
+                strip_optimizer(f)  # strip optimizers
+                if f is best:
+                    LOGGER.info(f"\nValidating {f}...")
+                    results, _, _ = validate.run(
+                        data_dict,
+                        batch_size=batch_size // WORLD_SIZE * 2,
+                        imgsz=imgsz,
+                        model=attempt_load(f, device).half(),
+                        iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
+                        single_cls=single_cls,
+                        dataloader=val_loader,
+                        save_dir=save_dir,
+                        save_json=is_coco,
+                        verbose=True,
+                        plots=plots,
+                        callbacks=callbacks,
+                        compute_loss=compute_loss,
+                    )  # val best model with plots
+                    if is_coco:
+                        callbacks.run("on_fit_epoch_end", list(mloss) + list(results) + lr, epoch, best_fitness, fi)
 
-    # callbacks.run("on_train_end", last, best, epoch, results)
-    # if RANK in {-1, 0}:
-    #     LOGGER.info(f"\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.")
-    #     for f in last, best:
-    #         if f.exists():
-    #             strip_optimizer(f)  # strip optimizers
-    #             if f is best:
-    #                 LOGGER.info(f"\nValidating {f}...")
-    #                 results, _, _ = validate.run(
-    #                     data_dict,
-    #                     batch_size=batch_size // WORLD_SIZE * 2,
-    #                     imgsz=imgsz,
-    #                     model=attempt_load(f, device).half(),
-    #                     iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
-    #                     single_cls=single_cls,
-    #                     dataloader=val_loader,
-    #                     save_dir=save_dir,
-    #                     save_json=is_coco,
-    #                     verbose=True,
-    #                     plots=plots,
-    #                     callbacks=callbacks,
-    #                     compute_loss=compute_loss,
-    #                 )  # val best model with plots
-    #                 if is_coco:
-    #                     callbacks.run("on_fit_epoch_end", list(mloss) + list(results) + lr, epoch, best_fitness, fi)
-
-    #     callbacks.run("on_train_end", last, best, epoch, results)
+        callbacks.run("on_train_end", last, best, epoch, results)
 
     torch.cuda.empty_cache()
     return results
@@ -683,11 +648,11 @@ def parse_opt(known=False):
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", type=str, default=ROOT / "yolov5s.pt", help="initial weights path")
-    parser.add_argument("--cfg", type=str, default="", help="yolov5s.yaml path")
-    parser.add_argument("--data", type=str, default=ROOT / "data/coco.yaml", help="dataset.yaml path")
+    parser.add_argument("--cfg", type=str, default="", help="model.yaml path")
+    parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="dataset.yaml path")
     parser.add_argument("--hyp", type=str, default=ROOT / "data/hyps/hyp.scratch-low.yaml", help="hyperparameters path")
-    parser.add_argument("--epochs", type=int, default=1, help="total training epochs")
-    parser.add_argument("--batch-size", type=int, default=1, help="total batch size for all GPUs, -1 for autobatch")
+    parser.add_argument("--epochs", type=int, default=100, help="total training epochs")
+    parser.add_argument("--batch-size", type=int, default=16, help="total batch size for all GPUs, -1 for autobatch")
     parser.add_argument("--imgsz", "--img", "--img-size", type=int, default=640, help="train, val image size (pixels)")
     parser.add_argument("--rect", action="store_true", help="rectangular training")
     parser.add_argument("--resume", nargs="?", const=True, default=False, help="resume most recent training")
@@ -703,12 +668,12 @@ def parse_opt(known=False):
     parser.add_argument("--bucket", type=str, default="", help="gsutil bucket")
     parser.add_argument("--cache", type=str, nargs="?", const="ram", help="image --cache ram/disk")
     parser.add_argument("--image-weights", action="store_true", help="use weighted image selection for training")
-    parser.add_argument("--device", default=0, help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     parser.add_argument("--multi-scale", action="store_true", help="vary img-size +/- 50%%")
     parser.add_argument("--single-cls", action="store_true", help="train multi-class data as single-class")
     parser.add_argument("--optimizer", type=str, choices=["SGD", "Adam", "AdamW"], default="SGD", help="optimizer")
     parser.add_argument("--sync-bn", action="store_true", help="use SyncBatchNorm, only available in DDP mode")
-    parser.add_argument("--workers", type=int, default=1, help="max dataloader workers (per RANK in DDP mode)")
+    parser.add_argument("--workers", type=int, default=8, help="max dataloader workers (per RANK in DDP mode)")
     parser.add_argument("--project", default=ROOT / "runs/train", help="save to project/name")
     parser.add_argument("--name", default="exp", help="save to project/name")
     parser.add_argument("--exist-ok", action="store_true", help="existing project/name ok, do not increment")
