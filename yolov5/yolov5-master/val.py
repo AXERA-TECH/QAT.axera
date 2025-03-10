@@ -188,6 +188,7 @@ def process_batch(detections, labels, iouv):
 def run(
     data,
     weights=None,  # model.pt path(s)
+    qat_onnx=None,  # model path or triton URL
     batch_size=32,  # batch size
     imgsz=640,  # inference size (pixels)
     conf_thres=0.001,  # confidence threshold
@@ -332,7 +333,7 @@ def run(
     if not training:
         # onnx session
         import onnxruntime as ort
-        sess = ort.InferenceSession("../../yolov5s_qat.onnx")
+        sess = ort.InferenceSession(qat_onnx)
     else:
         from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
         model = convert_pt2e(model)
@@ -550,6 +551,7 @@ def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default=ROOT / "data/coco.yaml", help="dataset.yaml path")
     parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5s.pt", help="model path(s)")
+    parser.add_argument("--qat_onnx", nargs="+", type=str, default=ROOT / "yolov5s_qat.onnx", help="model path or qat onnx")
     parser.add_argument("--batch-size", type=int, default=1, help="batch size")
     parser.add_argument("--imgsz", "--img", "--img-size", type=int, default=640, help="inference size (pixels)")
     parser.add_argument("--conf-thres", type=float, default=0.001, help="confidence threshold")
