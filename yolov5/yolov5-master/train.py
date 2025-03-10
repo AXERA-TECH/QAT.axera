@@ -226,7 +226,7 @@ def train(hyp, opt, device, callbacks):
 
     # from IPython import embed; embed()
     import onnx
-    from onnxslim import slim
+    from onnxsim import simplify
     from torch.ao.quantization.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
     from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
     from quantizer import AXQuantizer, get_quantization_config
@@ -243,7 +243,8 @@ def train(hyp, opt, device, callbacks):
         opset_version=18
     )
     onnx_model = onnx.load("./yolov5s_float.onnx")
-    model_simp = slim(onnx_model)
+    model_simp, check = simplify(onnx_model)
+    assert check, "Simplified ONNX model could not be validated"
     onnx.save(model_simp, "./yolov5s_float_sim.onnx")
     
     # Freeze
