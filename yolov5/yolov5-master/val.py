@@ -370,7 +370,10 @@ def run(
         anchors /= stride.view(-1, 1, 1)
         nxy = [80,40,20]
         for i in range(len(x)):
-            x[i] = torch.from_numpy(x[i]).to(device)
+            if torch.is_tensor(x[i]):
+                x[i] = x[i].to(device)
+            else:
+                x[i] = torch.from_numpy(x[i]).to(device)
             bs, _, ny, nx, _ = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             
             # generate grid and anchor_grid
