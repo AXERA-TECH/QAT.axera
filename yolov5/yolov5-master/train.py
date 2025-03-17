@@ -229,8 +229,8 @@ def train(hyp, opt, device, callbacks):
     from onnxsim import simplify
     from torch.ao.quantization.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
     from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
-    from quantizer import AXQuantizer, get_quantization_config
-    import quantized_decomposed_dequantize_per_channel
+    from utils.quantizer import AXQuantizer, get_quantization_config
+    import utils.quantized_decomposed_dequantize_per_channel
 
     inputs = torch.rand(1, 3, 640, 640).to("cuda")
     onnx_program = torch.onnx.export(model, (inputs,), dynamo=True)
@@ -372,7 +372,10 @@ def train(hyp, opt, device, callbacks):
     Detect = model.model[-1]
 
     quantizer = AXQuantizer()
-    quantizer.set_global(get_quantization_config(is_qat=True))
+    if opt.qat_weight == '8w8f':
+        quantizer.set_global(get_quantization_config(is_qat=True))
+    else:
+        quantizer.set_global(get_quantization_config(is_qat=True, weight_dtype=torch.int8, weight_qmin=-(2**3-1), weight_qmax=2**3-1))
     exported_model = torch.export.export_for_training(model, (inputs,)).module()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
     model = prepared_model
@@ -685,6 +688,7 @@ def parse_opt(known=False):
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", type=str, default=ROOT / "yolov5s.pt", help="initial weights path")
     parser.add_argument("--cfg", type=str, default="", help="yolov5s.yaml path")
+    parser.add_argument("--qat_weight", type=str, default="8w8f", help="qat weight select 8w8f or 4w8f")
     parser.add_argument("--data", type=str, default=ROOT / "data/coco.yaml", help="dataset.yaml path")
     parser.add_argument("--hyp", type=str, default=ROOT / "data/hyps/hyp.scratch-low.yaml", help="hyperparameters path")
     parser.add_argument("--epochs", type=int, default=1, help="total training epochs")
