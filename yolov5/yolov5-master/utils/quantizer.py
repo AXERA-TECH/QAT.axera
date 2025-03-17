@@ -24,7 +24,7 @@ from torch.ao.quantization.observer import (
 )
 from torch.ao.quantization.quantizer import QuantizationSpec, Quantizer, DerivedQuantizationSpec
 from torch.ao.quantization.quantizer.utils import _get_module_name_filter
-from quantizer_utils import (
+from utils.quantizer_utils import (
     _convert_scalars_to_attrs,
     OP_TO_ANNOTATOR,
     OperatorConfig,
@@ -446,7 +446,7 @@ class AXQuantizer(Quantizer):
             model = self._annotate_for_static_quantization_config(model)
 
         # set grid_sample input feature to symmetric quant
-        from quantizer import get_quantization_config
+        from utils.quantizer import get_quantization_config
         from torch.ao.quantization.quantizer.xnnpack_quantizer_utils import (
             get_input_act_qspec,
             get_output_act_qspec,
