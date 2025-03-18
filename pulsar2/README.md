@@ -26,3 +26,19 @@ pulsar2 build --config config.json --input resnet50_qat_sim.onnx --output_dir ou
 | --- | --- | --- | --- |
 | QAT 模型 <br> ONNX Runtime 推理 | 50000 | 72.638 | 91.378 |
 | Compiled AXModel 模型 <br> AXEngine 推理 | 50000 | 72.634 | 91.324 |
+
+## ONNX (4w8f) 编译使用说明
+
+考虑到 PyTorch 还不支持正式的 int4 weight 格式，用户从 QAT 训练并导出 ONNX 模型，实际上仍然使用 int8 表示，不过位宽已经限制在 int4 范围，首先需要执行如下命令将 ONNX 模型转成真正的 int4 的 ONNX 模型 (没错, ONNX 已经支持了 int4 格式. )
+
+```bash
+pip install -U onnxslim
+onnxslim model_qat_4w8f.onnx model_qat_4w8f_slim.onnx
+python convert_4w.py --input model_qat_4w8f_slim.onnx --output model_qat_4w8f_opt.onnx
+```
+
+使用如下命令编译即可：
+
+```bash
+pulsar2 build --config config.json --input model_qat_4w8f_opt.onnx --output_dir outputs --target_hardware AX620E
+```
