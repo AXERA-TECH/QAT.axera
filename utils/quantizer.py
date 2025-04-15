@@ -328,6 +328,25 @@ def _get_not_module_type_or_name_filter(
     return not_module_type_or_name_filter
 
 
+def _get_module_name_filter_tmp(module_name: str):
+    """Get the module_name_filter function for a given module name, the filter accepts
+    a node and checks if the node comes from a module that has certain module name
+
+    For example:
+        node: linear_op = call_function[...](...)  # comes from a module with name blocks.sub.linear1
+
+
+    >> module_name_filter = _get_module_name_filter("blocks.sub")
+    >> print(module_name_filter(node))
+    True  # the node is from "blocks.sub" based on the fully qualified name "blocks.sub.linear1"
+    """
+
+    def module_name_filter(n: Node) -> bool:
+        return module_name == n.name
+
+    return module_name_filter
+
+
 class AXQuantizer(Quantizer):
     supported_config_and_operators = _get_supported_config_and_operators()
     STATIC_QAT_ONLY_OPS = [
@@ -554,7 +573,7 @@ class AXQuantizer(Quantizer):
         module_name_list = list(self.module_name_config.keys())
         for module_name, config in self.module_name_config.items():
             self._annotate_all_static_patterns(
-                model, config, _get_module_name_filter(module_name)
+                model, config, _get_module_name_filter_tmp(module_name)
             )
 
         tp_list = list(self.module_type_config.keys())

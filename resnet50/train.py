@@ -1,3 +1,5 @@
+
+import json
 import torch
 from torch.ao.quantization.quantizer.xnnpack_quantizer import (
     XNNPACKQuantizer,
@@ -21,7 +23,12 @@ from utils.train_utils import (
 )
 import utils.quantized_decomposed_dequantize_per_channel
 
-
+dtype_map = {
+    "U8": torch.uint8,
+    "S8": torch.int8,
+    "U16": torch.uint16,
+    "S16": torch.int16
+}
 
 def train():
     data_loader, data_loader_test = imagenet_data_loaders("dataset/imagenet/")
@@ -32,9 +39,27 @@ def train():
     dynamo_export(float_model, example_inputs, float_path)
 
     # quantizer
+    with open('./resnet50/config.json', 'r') as f:
+        quantizer_config = json.load(f)
+
     quantizer = AXQuantizer()
-    quantizer.set_global(get_quantization_config(is_qat=True))
-    # quantizer.set_global(get_quantization_config(is_qat=True, act_dtype=torch.int16, act_qmin=-(2**15-1), act_qmax=2**15-1))
+
+    global_config = quantizer_config["global_config"]
+    quantizer.set_global(get_quantization_config(
+        is_symmetric=global_config["is_symmetric"], is_qat=True,
+        act_dtype=dtype_map[global_config["input"]["dtype"]], act_qmin=global_config["input"]["qmin"], act_qmax=global_config["input"]["qmax"],
+        weight_dtype=dtype_map[global_config["weight"]["dtype"]], weight_qmin=global_config["weight"]["qmin"], weight_qmax=global_config["weight"]["qmax"],
+    ))
+    
+    regional_configs = quantizer_config["regional_configs"]
+    for regional_config in regional_configs:
+        module_config = regional_config["module_config"]
+        for module_name in regional_config["module_names"]:
+            quantizer.set_module_name(module_name, get_quantization_config(
+                is_symmetric=module_config["is_symmetric"], is_qat=True,
+                act_dtype=dtype_map[module_config["input"]["dtype"]], act_qmin=module_config["input"]["qmin"], act_qmax=module_config["input"]["qmax"],
+                weight_dtype=dtype_map[module_config["weight"]["dtype"]], weight_qmin=module_config["weight"]["qmin"], weight_qmax=module_config["weight"]["qmax"],
+            ))
 
     exported_model = torch.export.export_for_training(float_model, example_inputs).module()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
