@@ -17,7 +17,7 @@ from utils.train_utils import (
     train_one_epoch,
     imagenet_data_loaders,
     dynamo_export,
-    onnxsim_simplify,
+    onnx_simplify,
 )
 import utils.quantized_decomposed_dequantize_per_channel
 
@@ -61,9 +61,9 @@ def train():
     qat_path = "./resnet50/resnet50_qat.onnx"
     dynamo_export(quantized_model, (example_inputs,), qat_path)
 
-    # onnxsim
+    # onnx simplify
     sim_path = "./resnet50/resnet50_qat_sim.onnx"
-    onnxsim_simplify(qat_path, sim_path)
+    onnx_simplify(qat_path, sim_path)
 
 
 if __name__ == "__main__":

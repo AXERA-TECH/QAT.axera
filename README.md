@@ -6,7 +6,7 @@ axera QAT demo
 ## minimum export demo
 
 ```bash
-python3 -m minimum.minimum_demo
+python -m minimum.minimum_demo
 ```
 
 ## resnet50 train
@@ -26,11 +26,11 @@ wget -O resnet50/resnet50_pretrained_float.pth https://download.pytorch.org/mode
 # train
 cd QAT.axera
 mkdir -p resnet50/checkpoint
-python3 -m resnet50.train
+python -m resnet50.train
 
 # test
 cd QAT.axera
-python3 -m resnet50.test
+python -m resnet50.test
 ```
 
 ## Validate on board

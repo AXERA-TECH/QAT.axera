@@ -1,16 +1,9 @@
-import os
-import sys
-import copy
 import time
 import onnx
 import logging
-import onnxruntime as ort
 import numpy as np
-from onnxsim import simplify
 
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 
 import torchvision
 from torchvision import datasets
@@ -18,6 +11,7 @@ from torchvision.models.resnet import resnet18, resnet50
 import torchvision.transforms as transforms
 
 logging.basicConfig(level=logging.INFO)
+
 
 def cifar10_data_loaders(data_path, train_batch_size = 32, eval_batch_size = 32):
     # 定义数据预处理
@@ -261,8 +255,9 @@ def dynamo_export(model, inputs, onnx_path):
     print(f"save onnx model to [{onnx_path}] Successfully!")
 
 
-def onnxsim_simplify(onnx_path, sim_path):
+def onnx_simplify(onnx_path, sim_path):
+    from onnxslim import slim
+
     model = onnx.load(onnx_path)
-    model_simp, check = simplify(model)
-    assert check, "Simplified ONNX model could not be validated"
+    model_simp = slim(model)
     onnx.save(model_simp, sim_path)
