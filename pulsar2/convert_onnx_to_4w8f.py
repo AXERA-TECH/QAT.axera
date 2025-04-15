@@ -22,13 +22,17 @@ def is_weight_dequant(node: gs.Node):
 
 
 def main():
+    from onnxslim.utils import print_model_info_as_table, summarize_model
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str)
     parser.add_argument("--output", type=str)
     args = parser.parse_args()
 
     print(f"Loading {args.input} ...")
-    onnx_graph = gs.import_onnx(onnx.load(args.input))
+    onnx_model = onnx.load(args.input)
+    model_info = summarize_model(onnx_model)
+    onnx_graph = gs.import_onnx(onnx_model)
 
     for node in onnx_graph.nodes:
         if is_weight_dequant(node):
@@ -40,6 +44,8 @@ def main():
     onnx_model = gs.export_onnx(onnx_graph)
     onnx.save(onnx_model, args.output)
     print(f"Save {args.output}")
+    model_4w8f_info = summarize_model(args.output)
+    print_model_info_as_table([model_info, model_4w8f_info])
 
 
 if __name__ == "__main__":
