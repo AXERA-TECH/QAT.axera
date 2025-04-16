@@ -8,9 +8,13 @@ from torch.ao.quantization.quantize_pt2e import (
   convert_pt2e,
 )
 
-from utils.quantizer import (
+# from utils.quantizer import (
+#     AXQuantizer,
+#     get_quantization_config,
+# )
+from utils.ax_quantizer import(
+    load_config,
     AXQuantizer,
-    get_quantization_config,
 )
 from utils.train_utils import (
     load_model,
@@ -32,9 +36,10 @@ def train():
     dynamo_export(float_model, example_inputs, float_path)
 
     # quantizer
+    global_config, regional_configs = load_config("./resnet50/config.json")
     quantizer = AXQuantizer()
-    quantizer.set_global(get_quantization_config(is_qat=True))
-    # quantizer.set_global(get_quantization_config(is_qat=True, act_dtype=torch.int16, act_qmin=-(2**15-1), act_qmax=2**15-1))
+    quantizer.set_global(global_config)
+    quantizer.set_regional(regional_configs)
 
     exported_model = torch.export.export_for_training(float_model, example_inputs).module()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)

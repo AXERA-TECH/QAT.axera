@@ -229,7 +229,7 @@ def train(hyp, opt, device, callbacks):
     from onnxslim import slim
     from torch.ao.quantization.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
     from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
-    from quantizer import AXQuantizer, get_quantization_config
+    from ax_quantizer import AXQuantizer, load_config
     import quantized_decomposed_dequantize_per_channel
 
     inputs = torch.rand(1, 3, 640, 640).to("cuda")
@@ -368,9 +368,13 @@ def train(hyp, opt, device, callbacks):
     model.names = names
     compute_loss = ComputeLoss(model)  # init loss class
 
+    # quantizer
+    global_config, regional_configs = load_config("./config.json")
     quantizer = AXQuantizer()
-    quantizer.set_global(get_quantization_config(is_qat=True))
+    quantizer.set_global(global_config)
+    quantizer.set_regional(regional_configs)
     exported_model = torch.export.export_for_training(model, (inputs,)).module()
+    # from IPython import embed; embed()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
     model = prepared_model
     # model = torch.nn.DataParallel(model)
@@ -528,6 +532,12 @@ def train(hyp, opt, device, callbacks):
         onnx_program = torch.onnx.export(quantized_model, (inputs,), dynamo=True)
         onnx_program.optimize()
         onnx_program.save("./yolov5s_qat.onnx")
+
+        import onnx
+        from onnxslim import slim
+        model = onnx.load("./yolov5s_qat.onnx")
+        model = slim(model)
+        onnx.save(model, "./yolov5s_qat_slim.onnx")
         exit()
 
         if RANK in {-1, 0}:
