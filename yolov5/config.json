@@ -1,0 +1,70 @@
+{
+    "global_config": {
+        "is_symmetric": false,
+        "input": {
+            "dtype": "U8",
+            "qmin": 0,
+            "qmax": 255
+        },
+        "weight": {
+            "dtype": "S8",
+            "qmin": -127,
+            "qmax": 127
+        }
+    },
+    "regional_configs": [
+        {
+            "module_names": ["conv2d", "conv2d_1", "conv2d_2", "conv2d_3", "conv2d_4", "conv2d_5", "conv2d_6", "conv2d_7"],
+            "module_type": "conv",
+            "module_config": {
+                "is_symmetric": false,
+                "input": {
+                    "dtype": "U4",
+                    "qmin": 0,
+                    "qmax": 15
+                },
+                "weight": {
+                    "dtype": "S4",
+                    "qmin": -7,
+                    "qmax": 7
+                }
+            }
+        },
+        {
+            "module_names": ["silu_", "silu__1", "silu__2", "silu__3", "silu__4", "silu__5", "silu__6", "silu__7"],
+            "module_type": "silu",
+            "module_config": {
+                "is_symmetric": false,
+                "input": {
+                    "dtype": "U16",
+                    "qmin": 0,
+                    "qmax": 65535
+                }
+            }
+        },
+        {
+            "module_names": ["add"],
+            "module_type": "add",
+            "module_config": {
+                "is_symmetric": false,
+                "input": {
+                    "dtype": "U16",
+                    "qmin": 0,
+                    "qmax": 65535
+                }
+            }
+        },
+        {
+            "module_names": ["cat"],
+            "module_type": "concat",
+            "module_config": {
+                "is_symmetric": false,
+                "input": {
+                    "dtype": "U16",
+                    "qmin": 0,
+                    "qmax": 65535
+                }
+            }
+        }
+    ]
+}
