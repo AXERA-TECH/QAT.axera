@@ -573,7 +573,7 @@ def _do_annotate_conv_bn(
             partition.append(bias_node)
         if _is_annotated(partition):
             continue
-        if filter_fn and all(not filter_fn(n) for n in partition):
+        if filter_fn and any(not filter_fn(n) for n in partition):
             continue
 
         # Annotate conv inputs and pattern output
