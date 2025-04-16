@@ -31,7 +31,7 @@
             }
         },
         {
-            "module_names": ["add__9"],
+            "module_names": ["add__5", "add__9"],
             "module_type": "add",
             "module_config": {
                 "is_symmetric": false,

@@ -282,11 +282,11 @@ class AXQuantizer(Quantizer):
 
     OPS = [
         "add",  # add, add_relu
-        # "avgpool2d",  # adaptive_avg_pool2d
+        "avgpool2d",  # adaptive_avg_pool2d
         "concat",  # "cat"
         "conv",  # conv, conv_relu, conv_bn, conv_bn_relu
         # "convtranspose",  # conv_transpose_relu, conv_transpose_bn, conv_transpose_bn_relu
-        # "linear",  # linear, linaer_relu
+        "linear",  # linear, linaer_relu
         "silu",
     ]
 

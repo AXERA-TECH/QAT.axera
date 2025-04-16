@@ -203,48 +203,78 @@ def get_bias_qspec(quantization_config: Optional[QuantizationConfig]):
 def _annotate_linear(
     gm: torch.fx.GraphModule,
     quantization_config: Optional[QuantizationConfig],
-    filter_fn: Optional[Callable[[Node], bool]] = None,
+    module_names: List[str] = None,
+    is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
-    annotated_partitions = []
-    input_act_qspec = get_input_act_qspec(quantization_config)
-    output_act_qspec = get_output_act_qspec(quantization_config)
-    weight_qspec = get_weight_qspec(quantization_config)
-    bias_qspec = get_bias_qspec(quantization_config)
+
     for node in gm.graph.nodes:
         if node.op != "call_function" or node.target != torch.ops.aten.linear.default:
             continue
-        if filter_fn and not filter_fn(node):
-            continue
-        act_node = node.args[0]
-        weight_node = node.args[1]
+
+        linear_node = node
+        weight_node = linear_node.args[1]
         bias_node = None
-        if len(node.args) > 2:
-            bias_node = node.args[2]
+        if len(linear_node.args) > 2:
+            bias_node = linear_node.args[2]
 
-        if _is_annotated([node]) is False:  # type: ignore[list-item]
-            _annotate_input_qspec_map(
-                node,
-                act_node,
-                input_act_qspec,
+        partition = [linear_node, weight_node]
+        if bias_node is not None:
+            partition.append(bias_node)
+        output_node = linear_node
+
+        if len(list(linear_node.users.keys())) == 1 and list(linear_node.users.keys())[0].target in [
+            torch.ops.aten.relu.default,
+            torch.ops.aten.relu_.default,
+        ]:
+            relu_node = list(linear_node.users.keys())[0]
+            output_node = relu_node
+            partition.append(relu_node)
+
+        input_node = linear_node.args[0]
+        if is_global:
+            input_qspec_map = {}
+            input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            if bias_node is not None:
+                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
+            linear_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                input_qspec_map=input_qspec_map,
+                _annotated=True,
             )
-            _annotate_input_qspec_map(
-                node,
-                weight_node,
-                weight_qspec,
-            )
-            nodes_to_mark_annotated = [node, weight_node]
-            if bias_node:
-                _annotate_input_qspec_map(
-                    node,
-                    bias_node,
-                    bias_qspec,
+            if output_node == linear_node:
+                linear_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
+            else:
+                output_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                    output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
+                    _annotated=True,
                 )
-                nodes_to_mark_annotated.append(bias_node)
-            _annotate_output_qspec(node, output_act_qspec)
-            _mark_nodes_as_annotated(nodes_to_mark_annotated)
-            annotated_partitions.append(nodes_to_mark_annotated)
+            _mark_nodes_as_annotated(partition)
+        else:
+            if module_names is not None and linear_node.name not in module_names:
+                continue
+            if not _is_annotated(partition):
+                assert False
+            # Annotate conv inputs and last node output
+            input_qspec_map = {}
+            input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            if bias_node is not None:
+                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
+            linear_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
 
-    return annotated_partitions
+            if len(list(input_node.users.keys())) == 1 or _all_users_annotate_equal(input_node, linear_node):
+                if "quantization_annotation" in input_node.meta:
+                    if isinstance(input_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
+                        prev_node = input_node.meta["quantization_annotation"].output_qspec.edge_or_node
+                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
+                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
+                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node):
+                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
+                    elif isinstance(input_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
+                        input_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
+                    else:
+                        assert False
+    return
 
 
 @register_annotator("linear_relu")
@@ -823,18 +853,19 @@ def _annotate_gru_io_only(
     return annotated_partitions
 
 
-@register_annotator("adaptive_avg_pool2d")
+@register_annotator("avgpool2d")
 def _annotate_adaptive_avg_pool2d(
     gm: torch.fx.GraphModule,
     quantization_config: Optional[QuantizationConfig],
-    filter_fn: Optional[Callable[[Node], bool]] = None,
+    module_names: List[str] = None,
+    is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
     """Always annotate adaptive_avg_pool2d op"""
     module_partitions = get_source_partitions(
-        gm.graph, [torch.nn.AdaptiveAvgPool2d, F.adaptive_avg_pool2d], filter_fn
+        gm.graph, [torch.nn.AdaptiveAvgPool2d, F.adaptive_avg_pool2d], None
     )
     partitions = list(itertools.chain.from_iterable(module_partitions.values()))
-    annotated_partitions = []
+
     for partition in partitions:
         pool_node = partition.output_nodes[0]
         if (
@@ -843,34 +874,44 @@ def _annotate_adaptive_avg_pool2d(
         ):
             raise ValueError(f"{pool_node} is not an aten adaptive_avg_pool2d operator")
 
-        if _is_annotated([pool_node]):
-            continue
+        input_node = pool_node.args[0]
+        assert isinstance(input_node, Node)
 
-        annotated_partitions.append(partition.nodes)
-        input_act = pool_node.args[0]
-        assert isinstance(input_act, Node)
+        input_act_qspec = get_input_act_qspec(quantization_config)
+        output_act_qspec = get_output_act_qspec(quantization_config)
 
-        # only annotate input output sharing operator
-        # when the output of the input node is annotated
-        if (
-            "quantization_annotation" not in input_act.meta
-            or not input_act.meta["quantization_annotation"]._annotated
-            or input_act.meta["quantization_annotation"].output_qspec is None
-        ):
-            input_act_qspec = get_input_act_qspec(quantization_config)
+        input_qspec_map = {}
+        input_qspec_map[input_node] = input_act_qspec
+
+        if is_global:
+            if _is_annotated([pool_node]):
+                continue
+            pool_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                input_qspec_map=input_qspec_map,
+                output_qspec=output_act_qspec,
+                _annotated=True,
+            )
         else:
-            input_act_qspec = SharedQuantizationSpec(input_act)
+            if not _is_annotated(partition):
+                assert False
+            if module_names is not None and pool_node.name not in module_names:
+                continue
 
-        # output sharing with input
-        output_act_qspec = SharedQuantizationSpec((input_act, pool_node))
-        pool_node.meta["quantization_annotation"] = QuantizationAnnotation(
-            input_qspec_map={
-                input_act: input_act_qspec,
-            },
-            output_qspec=output_act_qspec,
-            _annotated=True,
-        )
-    return annotated_partitions
+            pool_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
+
+            if len(list(input_node.users.keys())) == 1 or _all_users_annotate_equal(input_node, pool_node):
+                if "quantization_annotation" in input_node.meta:
+                    if isinstance(input_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
+                        prev_node = input_node.meta["quantization_annotation"].output_qspec.edge_or_node
+                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
+                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
+                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node):
+                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
+                    elif isinstance(input_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
+                        input_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
+                    else:
+                        assert False
+    return
 
 
 def _is_input_large_scalar(node: Node, gm: torch.fx.GraphModule):
