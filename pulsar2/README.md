@@ -29,16 +29,7 @@ pulsar2 build --config config.json --input resnet50_qat_sim.onnx --output_dir ou
 
 ## ONNX (4w8f) 编译使用说明
 
-考虑到 PyTorch 还不支持正式的 int4 weight 格式，用户从 QAT 训练并导出 ONNX 模型，实际上仍然使用 int8 表示，不过位宽已经限制在 int4 范围，首先需要执行如下命令将 ONNX 模型转成真正的 int4 的 ONNX 模型 (没错, ONNX 已经支持了 int4 格式. ) 我们这里使用开源工具 onnx-graphsurgeon 来转换模型, 但是目前 onnx-graphsurgeon 对 int4 支持不友好, 这里需要使用我们这里临时修改的版本. (这个修改希望能贡献到上游)
-
-首先安装我们临时的 onnx-graphsurgeon 版本:
-
-```bash
-cd ../onnx-graphsurgeon
-pip install -e .
-pip install -U onnxslim
-cd pulsar2
-```
+考虑到 PyTorch 还不支持正式的 int4 weight 格式，用户从 QAT 训练并导出 ONNX 模型，实际上仍然使用 int8 表示，不过位宽已经限制在 int4 范围，首先需要执行如下命令将 ONNX 模型转成真正的 int4 的 ONNX 模型 (没错, ONNX 已经支持了 int4 格式. )
 
 将 weights 修改成 int4 格式:
 
