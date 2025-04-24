@@ -3,7 +3,6 @@ import argparse
 import numpy as np
 
 import onnx
-import onnx_graphsurgeon as gs
 
 from onnx_graphsurgeon.exporters.onnx_exporter import OnnxExporter
 from onnx_graphsurgeon.exporters.onnx_exporter import check_duplicate_node_names
@@ -11,7 +10,9 @@ from onnx_graphsurgeon.exporters.onnx_exporter import dtype_to_onnx
 from onnx_graphsurgeon.exporters.onnx_exporter import update_import_domains
 from onnx_graphsurgeon.exporters.onnx_exporter import _NUMPY_ARRAY_CONVERTERS
 from onnx_graphsurgeon.logger import G_LOGGER
+from onnx_graphsurgeon.importers.onnx_importer import import_onnx
 from onnx_graphsurgeon.ir.graph import Graph
+from onnx_graphsurgeon.ir.node import Node
 from onnx_graphsurgeon.ir.tensor import Constant
 from onnx_graphsurgeon.ir.tensor import LazyValues
 from onnx_graphsurgeon.ir.tensor import SparseValues
@@ -159,15 +160,15 @@ def export_onnx(graph: Graph, do_type_check=True, **kwargs) -> "onnx.ModelProto"
     return model
 
 
-def is_weight_dequant(node: gs.Node):
+def is_weight_dequant(node: Node):
     return (
         node.op == "DequantizeLinear"
         and len(node.outputs[0].outputs) == 1
         and node.o().op == "Conv"
         and len(node.inputs) == 3
-        and isinstance(node.inputs[0], gs.Constant)
-        and isinstance(node.inputs[1], gs.Constant)
-        and isinstance(node.inputs[2], gs.Constant)
+        and isinstance(node.inputs[0], Constant)
+        and isinstance(node.inputs[1], Constant)
+        and isinstance(node.inputs[2], Constant)
         and len(node.inputs[0].shape) > 1
     )
 
@@ -183,13 +184,13 @@ def main():
     print(f"Loading {args.input} ...")
     onnx_model = onnx.load(args.input)
     model_info = summarize_model(onnx_model)
-    onnx_graph = gs.import_onnx(onnx_model)
+    onnx_graph = import_onnx(onnx_model)
 
     for node in onnx_graph.nodes:
         if is_weight_dequant(node):
-            x: gs.Constant = node.inputs[0]
+            x: Constant = node.inputs[0]
             x.values = x.values.astype(INT4_DTYPE)
-            x_zero_point: gs.Constant = node.inputs[2]
+            x_zero_point: Constant = node.inputs[2]
             x_zero_point.values = x_zero_point.values.astype(INT4_DTYPE)
 
     onnx_model = export_onnx(onnx_graph)
