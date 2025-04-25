@@ -134,12 +134,52 @@ def _all_users_annotate_equal(input_node: Node, node: Node):
     return True
 
 
+def _update_last_node_output_qspec(last_node: Node, node: Node, output_qspec: QuantizationSpec):
+    if len(list(last_node.users.keys())) == 1 or _all_users_annotate_equal(last_node, node):
+        if "quantization_annotation" in last_node.meta:
+            if isinstance(last_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
+                prev_node = last_node.meta["quantization_annotation"].output_qspec.edge_or_node
+                # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
+                #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
+                if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, last_node):
+                    prev_node.meta["quantization_annotation"].output_qspec = output_qspec
+            elif isinstance(last_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
+                last_node.meta["quantization_annotation"].output_qspec = output_qspec
+            else:
+                assert False
+    return
+
+
 def _mark_nodes_as_annotated(nodes: List[Node]):
     for node in nodes:
         if node is not None:
             if "quantization_annotation" not in node.meta:
                 node.meta["quantization_annotation"] = QuantizationAnnotation()
             node.meta["quantization_annotation"]._annotated = True
+
+
+def _is_input_large_scalar(node: Node, gm: torch.fx.GraphModule):
+    """Check if input is a large scalar value. So that we can skip quantization for the node
+    since histc op (in HistogramObserver) only works for values up to certain upper bound
+    """
+    if node.op == "get_attr":
+        qualified_name = str(node.target)
+        module_path, _, name = qualified_name.rpartition(".")
+        submod = gm.get_submodule(module_path)
+        tensor = getattr(submod, name)
+        # torch.histc works until this upper bound
+        HISTC_UPPER_BOUND = 3.4028235e15
+        return tensor.numel() == 1 and abs(tensor.item()) > HISTC_UPPER_BOUND
+    return False
+
+
+def _is_input_non_float_tensor(node: Node):
+    """Check if the input is not a float tensor, so that we can skip quantization for the node
+    since observers only works with float Tensors
+    """
+    if "val" not in node.meta or not isinstance(node.meta["val"], FakeTensor):
+        return True
+    return node.meta["val"].dtype != torch.float32
 
 
 def get_input_act_qspec(quantization_config: Optional[QuantizationConfig]):
@@ -254,26 +294,14 @@ def _annotate_linear(
                 continue
             if not _is_annotated(partition):
                 assert False
-            # Annotate conv inputs and last node output
+            # Annotate node inputs and last node output
             input_qspec_map = {}
             input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
             input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
             if bias_node is not None:
                 input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
             linear_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
-
-            if len(list(input_node.users.keys())) == 1 or _all_users_annotate_equal(input_node, linear_node):
-                if "quantization_annotation" in input_node.meta:
-                    if isinstance(input_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        prev_node = input_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node):
-                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    elif isinstance(input_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
-                        input_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    else:
-                        assert False
+            _update_last_node_output_qspec(input_node, linear_node, get_input_act_qspec(quantization_config))
     return
 
 
@@ -451,6 +479,183 @@ def _annotate_conv(
                 if len(users) != 1:
                     continue
                 next_node = users[0]
+                if next_node.op == "call_function" and next_node.target in [
+                    torch.ops.aten.relu.default,
+                    torch.ops.aten.relu_.default,
+                ]:
+                    continue
+                if not has_bn:
+                    if next_node.op == "call_function" and next_node.target in [
+                        torch.ops.aten.batch_norm.default
+                    ]:
+                        continue
+            matches.append(sub_match)
+
+    # Annotate nodes returned in the matches
+    for match in matches:
+        name_node_map = match.name_node_map
+        input_node = name_node_map["input"]
+        conv_node = name_node_map["conv"]
+        weight_node = name_node_map["weight"]
+        bias_node = name_node_map["bias"]
+        output_node = name_node_map["output"]
+
+        # TODO: annotate the uses of input, weight, and bias separately instead
+        # of assuming they come from a single conv node. This is not possible today
+        # because input may have multiple users, and we can't rely on the conv node
+        # always being the first user. This was the case in models with skip
+        # connections like resnet18
+
+        # Validate conv args
+        if conv_node.args[0] is not input_node:
+            raise ValueError("Conv arg did not contain input node ", input_node)
+        if conv_node.args[1] is not weight_node:
+            raise ValueError("Conv arg did not contain weight node ", weight_node)
+        if len(conv_node.args) > 2 and conv_node.args[2] is not bias_node:
+            raise ValueError("Conv arg did not contain bias node ", bias_node)
+
+        # Skip if the partition is already annotated or is filtered out by the user
+        partition = [conv_node, weight_node]
+        if bias_node is not None:
+            partition.append(bias_node)
+
+        if is_global:
+            if _is_annotated(partition):
+                continue
+            # Annotate conv inputs and pattern output
+            input_qspec_map = {}
+            input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            if bias_node is not None:
+                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
+            conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                input_qspec_map=input_qspec_map,
+                _annotated=True,
+            )
+            if output_node == conv_node:
+                conv_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
+            else:
+                output_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                    output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
+                    _annotated=True,
+                )
+            _mark_nodes_as_annotated(partition)
+        else:
+            if module_names is not None and conv_node.name not in module_names:
+                continue
+            if not _is_annotated(partition):
+                assert False
+            # Annotate node inputs and last node output
+            input_qspec_map = {}
+            input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            if bias_node is not None:
+                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
+            conv_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
+            _update_last_node_output_qspec(input_node, conv_node, get_input_act_qspec(quantization_config))
+    return
+
+
+@register_annotator("conv_transpose")
+def _annotate_conv(
+    gm: torch.fx.GraphModule,
+    quantization_config: Optional[QuantizationConfig],
+    module_names: List[str] = None,
+    is_global: bool = True,
+):
+    def get_pattern(conv_fn: Callable, has_bn: bool, has_relu: bool, relu_is_inplace: bool):
+        def _conv_bn(x, conv_weight, conv_bias, bn_weight=None, bn_bias=None, bn_rm=None, bn_rv=None):
+            conv = conv_fn(x, conv_weight, conv_bias)
+            if has_bn:
+                bn = F.batch_norm(conv, bn_rm, bn_rv, bn_weight, bn_bias, training=True)
+            else:
+                bn = conv
+            if has_relu:
+                output = F.relu_(bn) if relu_is_inplace else F.relu(bn)
+            else:
+                output = bn
+            return output, {
+                "input": x,
+                "conv": conv,
+                "weight": conv_weight,
+                "bias": conv_bias,
+                "output": output,
+            }
+
+        return _WrapperModule(_conv_bn)
+
+    # Needed for matching, otherwise the matches gets filtered out due to unused
+    # nodes returned by batch norm
+    gm.graph.eliminate_dead_code()
+    gm.recompile()
+
+    from torch._export import gm_using_training_ir
+
+    using_training_ir = gm_using_training_ir(gm)
+
+    # example_inputs
+    _conv1d_example_inputs = (
+        torch.randn(1, 1, 3),  # x
+        torch.randn(1, 1, 1),  # conv_weight
+        torch.randn(1),  # conv_bias
+    )
+    _conv1d_bn_example_inputs = (
+        torch.randn(1, 1, 3),  # x
+        torch.randn(1, 1, 1),  # conv_weight
+        torch.randn(1),  # conv_bias
+        torch.randn(1),  # bn_weight
+        torch.randn(1),  # bn_bias
+        torch.randn(1),  # bn_running_mean
+        torch.randn(1),  # bn_running_var
+    )
+    _conv2d_example_inputs = (
+        torch.randn(1, 1, 3, 3),  # x
+        torch.randn(1, 1, 1, 1),  # conv_weight
+        torch.randn(1),  # conv_bias
+    )
+    _conv2d_bn_example_inputs = (
+        torch.randn(1, 1, 3, 3),  # x
+        torch.randn(1, 1, 1, 1),  # conv_weight
+        torch.randn(1),  # conv_bias
+        torch.randn(1),  # bn_weight
+        torch.randn(1),  # bn_bias
+        torch.randn(1),  # bn_running_mean
+        torch.randn(1),  # bn_running_var
+    )
+
+    matches: List[InternalMatch] = []
+    combinations = [
+        (F.conv_transpose1d, False, _conv1d_example_inputs),  # conv_fn, has_bn, example_input
+        (F.convconv_transpose1d1d, True, _conv1d_bn_example_inputs),  # conv_fn, has_bn, example_input
+        (F.conv_transpose2d, False, _conv2d_example_inputs),  # type: ignore[list-item]
+        (F.conv_transpose2d, True, _conv2d_bn_example_inputs),  # type: ignore[list-item]
+    ]
+
+    # Add `is_cuda` and `relu_is_inplace` dimensions
+    combinations = itertools.product(  # type: ignore[assignment]
+        combinations,
+        [True, False] if torch.cuda.is_available() else [False],  # is_cuda
+        [True, False],  # has_relu
+        [True, False],  # relu_is_inplace
+    )
+
+    # Match against all conv dimensions and cuda variants
+    for (conv_fn, has_bn, example_inputs), is_cuda, has_relu, relu_is_inplace in combinations:  # type: ignore[misc]
+        if not has_relu and relu_is_inplace:
+            continue
+        pattern = get_pattern(conv_fn, has_bn, has_relu, relu_is_inplace)  # type: ignore[has-type]
+        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, using_training_ir=using_training_ir)  # type: ignore[has-type]
+        pattern.graph.eliminate_dead_code()
+        pattern.recompile()
+        matcher = SubgraphMatcherWithNameNodeMap(pattern, ignore_literals=True)
+        sub_matches = matcher.match(gm.graph)
+        for sub_match in sub_matches:
+            if not has_relu:
+                output_node = sub_match.name_node_map["output"]
+                users = list(output_node.users.keys())
+                if len(users) != 1:
+                    continue
+                next_node = users[0]
                 if next_node.op == "" and  next_node.target in [
                     torch.ops.aten.relu.default,
                     torch.ops.aten.relu_.default,
@@ -517,27 +722,14 @@ def _annotate_conv(
                 continue
             if not _is_annotated(partition):
                 assert False
-            # Annotate conv inputs and last node output
+            # Annotate node inputs and last node output
             input_qspec_map = {}
             input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
             input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
             if bias_node is not None:
                 input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
             conv_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
-
-            if len(list(input_node.users.keys())) == 1 or _all_users_annotate_equal(input_node, conv_node):
-                if "quantization_annotation" in input_node.meta:
-                    if isinstance(input_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        prev_node = input_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node):
-                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    elif isinstance(input_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
-                        input_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    else:
-                        assert False
-
+            _update_last_node_output_qspec(input_node, conv_node, get_input_act_qspec(quantization_config))
     return
 
 
@@ -898,119 +1090,8 @@ def _annotate_adaptive_avg_pool2d(
                 continue
 
             pool_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
-
-            if len(list(input_node.users.keys())) == 1 or _all_users_annotate_equal(input_node, pool_node):
-                if "quantization_annotation" in input_node.meta:
-                    if isinstance(input_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        prev_node = input_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node):
-                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    elif isinstance(input_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
-                        input_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    else:
-                        assert False
+            _update_last_node_output_qspec(input_node, pool_node, get_input_act_qspec(quantization_config))
     return
-
-
-def _is_input_large_scalar(node: Node, gm: torch.fx.GraphModule):
-    """Check if input is a large scalar value. So that we can skip quantization for the node
-    since histc op (in HistogramObserver) only works for values up to certain upper bound
-    """
-    if node.op == "get_attr":
-        qualified_name = str(node.target)
-        module_path, _, name = qualified_name.rpartition(".")
-        submod = gm.get_submodule(module_path)
-        tensor = getattr(submod, name)
-        # torch.histc works until this upper bound
-        HISTC_UPPER_BOUND = 3.4028235e15
-        return tensor.numel() == 1 and abs(tensor.item()) > HISTC_UPPER_BOUND
-    return False
-
-
-def _is_input_non_float_tensor(node: Node):
-    """Check if the input is not a float tensor, so that we can skip quantization for the node
-    since observers only works with float Tensors
-    """
-    if "val" not in node.meta or not isinstance(node.meta["val"], FakeTensor):
-        return True
-    return node.meta["val"].dtype != torch.float32
-
-
-@register_annotator("add_relu")
-def _annotate_add_relu(
-    gm: torch.fx.GraphModule,
-    quantization_config: Optional[QuantizationConfig],
-    filter_fn: Optional[Callable[[Node], bool]] = None,
-) -> Optional[List[List[Node]]]:
-    annotated_partitions = []
-    for node in gm.graph.nodes:
-        if node.op != "call_function" or node.target not in [
-            torch.ops.aten.relu.default,
-            torch.ops.aten.relu_.default,
-        ]:
-            continue
-        relu_node = node
-        maybe_add = node.args[0]
-        if (
-            not isinstance(maybe_add, Node)
-            or maybe_add.op != "call_function"
-            or maybe_add.target
-            not in [
-                torch.ops.aten.add.Tensor,
-                torch.ops.aten.add_.Tensor,
-            ]
-        ):
-            continue
-
-        add_node = maybe_add
-
-        if len(add_node.users) > 1:
-            # add can't be fused with ReLU if the result of add is being used
-            # else where in the graph
-            continue
-
-        partition = [relu_node, add_node]
-
-        if _is_annotated(partition):
-            continue
-
-        if filter_fn and any(not filter_fn(n) for n in partition):
-            continue
-
-        input_act_qspec = get_input_act_qspec(quantization_config)
-        output_act_qspec = get_output_act_qspec(quantization_config)
-
-        input_qspec_map = {}
-        input_act0 = add_node.args[0]
-        if isinstance(input_act0, Node):
-            if _is_input_large_scalar(input_act0, gm):
-                continue
-            if _is_input_non_float_tensor(input_act0):
-                continue
-            partition.append(input_act0)
-            input_qspec_map[input_act0] = input_act_qspec
-
-        input_act1 = add_node.args[1]
-        if isinstance(input_act1, Node):
-            if _is_input_large_scalar(input_act1, gm):
-                continue
-            if _is_input_non_float_tensor(input_act1):
-                continue
-            partition.append(input_act1)
-            input_qspec_map[input_act1] = input_act_qspec
-
-        add_node.meta["quantization_annotation"] = QuantizationAnnotation(
-            input_qspec_map=input_qspec_map,
-            _annotated=True,
-        )
-        relu_node.meta["quantization_annotation"] = QuantizationAnnotation(
-            output_qspec=output_act_qspec,
-            _annotated=True,
-        )
-        annotated_partitions.append(partition)
-    return annotated_partitions
 
 
 @register_annotator("add")
@@ -1042,7 +1123,7 @@ def _annotate_add(
         if _is_input_non_float_tensor(input_node1):
             continue
 
-        if len(list(add_node.users.keys())) == 1 and list(add_node.users.keys())[0].target in [
+        if len(add_node.users) == 1 and list(add_node.users.keys())[0].target in [
             torch.ops.aten.relu.default,
             torch.ops.aten.relu_.default,
         ]:
@@ -1078,31 +1159,8 @@ def _annotate_add(
                 continue
 
             add_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
-
-            if len(list(input_node0.users.keys())) == 1 or _all_users_annotate_equal(input_node0, add_node):
-                if "quantization_annotation" in input_node0.meta:
-                    if isinstance(input_node0.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        prev_node = input_node0.meta["quantization_annotation"].output_qspec.edge_or_node
-                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node0):
-                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    elif isinstance(input_node0.meta["quantization_annotation"].output_qspec, QuantizationSpec):
-                        input_node0.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    else:
-                        assert False
-            if len(list(input_node1.users.keys())) == 1 or _all_users_annotate_equal(input_node1, add_node):
-                if "quantization_annotation" in input_node1.meta:
-                    if isinstance(input_node1.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        prev_node = input_node1.meta["quantization_annotation"].output_qspec.edge_or_node
-                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node1):
-                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    elif isinstance(input_node1.meta["quantization_annotation"].output_qspec, QuantizationSpec):
-                        input_node1.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    else:
-                        assert False
+            _update_last_node_output_qspec(input_node0, add_node, get_input_act_qspec(quantization_config))
+            _update_last_node_output_qspec(input_node1, add_node, get_input_act_qspec(quantization_config))
     return
 
 
@@ -1278,19 +1336,7 @@ def _annotate_silu(
                 continue
 
             silu_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
-
-            if len(list(input_node.users.keys())) == 1 or _all_users_annotate_equal(input_node, silu_node):
-                if "quantization_annotation" in input_node.meta:
-                    if isinstance(input_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        prev_node = input_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                        #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                        if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node):
-                            prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    elif isinstance(input_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
-                        input_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                    else:
-                        assert False
+            _update_last_node_output_qspec(input_node, silu_node, get_input_act_qspec(quantization_config))
     return
 
 
@@ -1338,20 +1384,8 @@ def _annotate_cat(
                 continue
 
             cat_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
-
             for input_node in inputs:
-                if len(list(input_node.users.keys())) == 1 or _all_users_annotate_equal(input_node, cat_node):
-                    if "quantization_annotation" in input_node.meta:
-                        if isinstance(input_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                            prev_node = input_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                            # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                            #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                            if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_node):
-                                prev_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                        elif isinstance(input_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
-                            input_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(quantization_config)
-                        else:
-                            assert False
+                _update_last_node_output_qspec(input_node, cat_node, get_input_act_qspec(quantization_config))
     return
 
 
