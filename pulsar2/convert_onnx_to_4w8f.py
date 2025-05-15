@@ -160,13 +160,22 @@ def export_onnx(graph: Graph, do_type_check=True, **kwargs) -> "onnx.ModelProto"
     return model
 
 
-def is_weight_dequant(node: Node):
+def is_int4_range(arr: np.ndarray) -> bool:
+    """
+    Check if all elements in array are within int4 range (-8 to 7).
+    """
+    int4_boundary = int(pow(2, 3))
+    return ((arr >= -int4_boundary) & (arr < int4_boundary)).all()
+
+
+def is_weight_4bits(node: Node):
     return (
         node.op == "DequantizeLinear"
         and len(node.outputs[0].outputs) == 1
         and node.o().op == "Conv"
         and len(node.inputs) == 3
         and isinstance(node.inputs[0], Constant)
+        and is_int4_range(node.inputs[0].values)
         and isinstance(node.inputs[1], Constant)
         and isinstance(node.inputs[2], Constant)
         and len(node.inputs[0].shape) > 1
@@ -187,11 +196,16 @@ def main():
     onnx_graph = import_onnx(onnx_model)
 
     for node in onnx_graph.nodes:
-        if is_weight_dequant(node):
+        if is_weight_4bits(node):
+            print(f"Convert weights of node '{node.name}' to int4.")
             x: Constant = node.inputs[0]
             x.values = x.values.astype(INT4_DTYPE)
-            x_zero_point: Constant = node.inputs[2]
+            x_zero_point: Constant = node.inputs[2].copy()
+            node.inputs.pop()
             x_zero_point.values = x_zero_point.values.astype(INT4_DTYPE)
+            x_zero_point.export_dtype = INT4_DTYPE
+            x_zero_point.name = f"{node.name}_{x_zero_point.name}"
+            node.inputs.append(x_zero_point)
 
     onnx_model = export_onnx(onnx_graph)
     onnx.save(onnx_model, args.output)
