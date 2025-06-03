@@ -261,3 +261,4 @@ def onnx_simplify(onnx_path, sim_path):
     model = onnx.load(onnx_path)
     model_simp = slim(model)
     onnx.save(model_simp, sim_path)
+    print(f"save onnx model to [{sim_path}] Successfully!")

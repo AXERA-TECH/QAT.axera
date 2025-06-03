@@ -1,0 +1,46 @@
+{
+    "global_config": {
+        "is_symmetric": false,
+        "input": {
+            "dtype": "U8",
+            "qmin": 0,
+            "qmax": 255
+        },
+        "weight": {
+            "dtype": "S8",
+            "qmin": -127,
+            "qmax": 127
+        }
+    },
+    "regional_configs": [
+        {
+            "module_names": ["conv2d_1", "conv2d_2", "conv2d_3", "conv2d_4", "conv2d_5"],
+            "module_type": "conv",
+            "module_config": {
+                "is_symmetric": false,
+                "input": {
+                    "dtype": "U16",
+                    "qmin": 0,
+                    "qmax": 65535
+                },
+                "weight": {
+                    "dtype": "S8",
+                    "qmin": -127,
+                    "qmax": 127
+                }
+            }
+        },
+        {
+            "module_names": ["add__5", "add__9"],
+            "module_type": "add",
+            "module_config": {
+                "is_symmetric": false,
+                "input": {
+                    "dtype": "U16",
+                    "qmin": 0,
+                    "qmax": 65535
+                }
+            }
+        }
+    ]
+}

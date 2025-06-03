@@ -10,9 +10,13 @@ from torch.ao.quantization.quantize_pt2e import (
   convert_pt2e,
 )
 
-from utils.quantizer import (
+# from utils.quantizer import (
+#     AXQuantizer,
+#     get_quantization_config,
+# )
+from utils.ax_quantizer import(
+    load_config,
     AXQuantizer,
-    get_quantization_config,
 )
 from utils.train_utils import (
   load_model,
@@ -27,8 +31,10 @@ def test():
     float_model = load_model("./resnet50/resnet50_pretrained_float.pth", "resnet50").to("cuda")
 
     # quantizer
+    global_config, regional_configs = load_config("./resnet50/config.json")
     quantizer = AXQuantizer()
-    quantizer.set_global(get_quantization_config(is_qat=True))
+    quantizer.set_global(global_config)
+    quantizer.set_regional(regional_configs)
 
     # quant model
     example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)

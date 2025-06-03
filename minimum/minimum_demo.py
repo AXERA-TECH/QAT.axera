@@ -10,9 +10,13 @@ from torch.ao.quantization.quantize_pt2e import (
   convert_pt2e,
 )
 
-from utils.quantizer import (
+# from utils.quantizer import (
+#     AXQuantizer,
+#     get_quantization_config,
+# )
+from utils.ax_quantizer import(
+    load_config,
     AXQuantizer,
-    get_quantization_config,
 )
 from utils.train_utils import dynamo_export, onnx_simplify
 import utils.quantized_decomposed_dequantize_per_channel
@@ -53,8 +57,10 @@ float_path = "./minimum/minimum_float.onnx"
 dynamo_export(float_model, input, float_path)
 
 # set quantizer
+global_config, regional_configs = load_config("./minimum/config.json")
 quantizer = AXQuantizer()
-quantizer.set_global(get_quantization_config(is_qat=True))
+quantizer.set_global(global_config)
+quantizer.set_regional(regional_configs)
 
 # export qat model
 exported_model = torch.export.export_for_training(float_model, (input,)).module()
