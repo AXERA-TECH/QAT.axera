@@ -57,7 +57,7 @@ float_path = "./minimum/minimum_float.onnx"
 dynamo_export(float_model, input, float_path)
 
 # set quantizer
-global_config, regional_configs = load_config("./resnet50/config.json")
+global_config, regional_configs = load_config("./minimum/config.json")
 quantizer = AXQuantizer()
 quantizer.set_global(global_config)
 quantizer.set_regional(regional_configs)

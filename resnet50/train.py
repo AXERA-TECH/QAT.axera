@@ -1,3 +1,4 @@
+import copy
 import torch
 from torch.ao.quantization.quantizer.xnnpack_quantizer import (
     XNNPACKQuantizer,
@@ -22,6 +23,7 @@ from utils.train_utils import (
     imagenet_data_loaders,
     dynamo_export,
     onnx_simplify,
+    evaluate,
 )
 import utils.quantized_decomposed_dequantize_per_channel
 
@@ -50,11 +52,18 @@ def train():
     optimizer = torch.optim.SGD(prepared_model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
 
     # train
+    num_epochs_between_evals = 2
     for nepoch in range(num_epochs):
         train_one_epoch(prepared_model, criterion, optimizer, data_loader, "cuda", num_train_batches)
 
         checkpoint_path = "./resnet50/checkpoint/checkpoint_%s.pth" % nepoch
         torch.save(prepared_model.state_dict(), checkpoint_path)
+
+        if (nepoch + 1) % num_epochs_between_evals == 0:
+            prepared_model_copy = copy.deepcopy(prepared_model)
+            quantized_model = convert_pt2e(prepared_model_copy)
+            top1, top5 = evaluate(quantized_model, data_loader_test)
+            print('Epoch %d: Evaluation accuracy, %2.2f' % (nepoch, top1.avg))
 
     torch.save(prepared_model.state_dict(), "./resnet50/checkpoint/last_checkpoint.pth")
 

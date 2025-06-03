@@ -33,6 +33,7 @@ from utils.ax_quantizer_utils import (
     OperatorPatternType,
     propagate_annotation,
     QuantizationConfig,
+    annotate_bias,
 )
 from torch.fx import Node
 
@@ -221,6 +222,25 @@ def get_config(config: Dict[str, Any]):
     return is_symmetric, quant_config
 
 
+def load_global_config(global_config: Dict[str, str]):
+    is_symmetric, quant_config = get_config(global_config)
+    global_quantization_config = get_quantization_config(is_symmetric=is_symmetric, quant_config=quant_config)
+    return global_quantization_config
+
+
+def load_regional_config(regional_config: Dict[str, str]):
+    module_names = regional_config.get("module_names", None)
+    module_type = regional_config["module_type"]
+    is_symmetric, quant_config = get_config(regional_config["module_config"])
+    module_config = get_quantization_config(is_symmetric=is_symmetric, quant_config=quant_config)
+    regional_quantization_config = QuantizerRegionalConf(
+        module_names=module_names,
+        module_type=module_type,
+        module_config=module_config
+    )
+    return regional_quantization_config
+
+
 def load_config(config_file: str):
 
     with open(config_file, 'r') as f:
@@ -228,22 +248,13 @@ def load_config(config_file: str):
     
     # global
     global_config = config["global_config"]
-    is_symmetric, quant_config = get_config(global_config)
-    global_quantization_config = get_quantization_config(is_symmetric=is_symmetric, quant_config=quant_config)
+    global_quantization_config = load_global_config(global_config)
 
     # rregional
-    regional_quantization_configs = []
     regional_configs = config["regional_configs"]
+    regional_quantization_configs = []
     for regional_config in regional_configs:
-        module_names = regional_config["module_names"]
-        module_type = regional_config["module_type"]
-        is_symmetric, quant_config = get_config(regional_config["module_config"])
-        module_config = get_quantization_config(is_symmetric=is_symmetric, quant_config=quant_config)
-        regional_quantization_config = QuantizerRegionalConf(
-            module_names=module_names,
-            module_type=module_type,
-            module_config=module_config
-        )
+        regional_quantization_config = load_regional_config(regional_config)
         regional_quantization_configs.append(regional_quantization_config)
 
     return global_quantization_config, regional_quantization_configs
@@ -286,21 +297,66 @@ class AXQuantizer(Quantizer):
         "concat",  # "cat"
         "conv",  # conv, conv_relu, conv_bn, conv_bn_relu
         # "convtranspose",  # conv_transpose_relu, conv_transpose_bn, conv_transpose_bn_relu
+        "layernorm",
         "linear",  # linear, linaer_relu
+        "matmul",
+        "mul",  # mul, mul_relu
+        "gelu",
+        "glu",
+        "gridsample",
+        "groupnorm",
         "silu",
+        "softmax",
     ]
 
     def __init__(self) -> None:
         super().__init__()
+        # init global
         self.global_config: Optional[QuantizationConfig] = None
-        self.regional_configs: List[Optional[QuantizerRegionalConf]] = None
+        # init regional
+        self.regional_configs: List[QuantizerRegionalConf] = []
+        self.init_regional()
 
+    def init_regional(self):
+        # matlul
+        regional_matmul = {
+            "module_names": None,
+            "module_type": "matmul",
+            "module_config": {
+                "is_symmetric": True,
+                "input": {
+                    "dtype": "S16",
+                    "qmin": -32767,
+                    "qmax": 32767
+                },
+            }
+        }
+        regional_matmul_config = load_regional_config(regional_matmul)
+        self.regional_configs.append(regional_matmul_config)
+        # gridsample
+        regional_gridsample = {
+            "module_names": None,
+            "module_type": "gridsample",
+            "module_config": {
+                "is_symmetric": True,
+                "input": {
+                    "dtype": "S16",
+                    "qmin": -32767,
+                    "qmax": 32767
+                },
+            }
+        }
+        regional_gridsample_config = load_regional_config(regional_gridsample)
+        self.regional_configs.append(regional_gridsample_config)
+        return self
+        
+    
     def set_global(self, global_config: QuantizationConfig) -> AXQuantizer:
         self.global_config = global_config
         return self
 
-    def set_regional(self, regional_configs: List[Optional[QuantizerRegionalConf]]):
-        self.regional_configs = regional_configs
+    def set_regional(self, regional_configs: List[QuantizerRegionalConf]):
+        self.regional_configs.extend(regional_configs)
         return self
 
     def transform_for_annotation(
@@ -325,77 +381,8 @@ class AXQuantizer(Quantizer):
                     continue
                 OP_TO_ANNOTATOR[module_type](model, module_config, module_names, is_global=False)
 
+        annotate_bias(model)
 
-        # set grid_sample input feature to symmetric quant
-        from utils.quantizer import get_quantization_config
-        from torch.ao.quantization.quantizer.xnnpack_quantizer_utils import (
-            get_input_act_qspec,
-            get_output_act_qspec,
-        )
-        from torch.ao.quantization.quantizer import (
-            QuantizationAnnotation,
-            QuantizationSpec,
-            QuantizationSpecBase,
-            SharedQuantizationSpec,
-        )
-        for node in model.graph.nodes:
-            if node.op == "call_function" and  node.target  in [torch.ops.aten.grid_sampler.default]:
-                # from IPython import embed; embed()
-                
-                config = get_quantization_config(is_symmetric=True, is_qat=True, act_dtype=torch.int16, act_qmin=-(2**15-1), act_qmax=2**15-1)
-
-                relu_node = node.args[0]
-                relu_node.meta["quantization_annotation"].output_qspec = get_input_act_qspec(config)
-
-                input_qspec_map = {}
-                input_act0 = node.args[0]
-                input_qspec_map[input_act0] = get_input_act_qspec(config)
-                input_act1 = node.args[1]
-                input_qspec_map[input_act1] = get_input_act_qspec(config)
-                node.meta["quantization_annotation"] = QuantizationAnnotation(
-                    input_qspec_map=input_qspec_map,
-                    # output_qspec=get_output_act_qspec(aconfig),
-                    _annotated=True,
-                )
-
-        for node in model.graph.nodes:
-            if node.op == "call_function" and node.target == torch.ops.aten.conv2d.default:
-                input_act = node.args[0]
-                assert isinstance(input_act, Node)
-                weight = node.args[1]
-                assert isinstance(weight, Node)
-                if len(node.args) <= 2 or node.args[2] is None:
-                    continue
-                bias = node.args[2]
-                assert isinstance(bias, Node)
-
-                def derive_qparams_fn(
-                    obs_or_fqs: list[ObserverOrFakeQuantize],
-                ) -> tuple[Tensor, Tensor]:
-                    assert (
-                        len(obs_or_fqs) == 2
-                    ), f"Expecting one weight obs/fq, got: {len(obs_or_fqs)}"
-                    act_obs_or_fq = obs_or_fqs[0]
-                    weight_obs_or_fq = obs_or_fqs[1]
-                    act_scale, act_zp = act_obs_or_fq.calculate_qparams()
-                    (
-                        weight_scale,
-                        weight_zp,
-                    ) = weight_obs_or_fq.calculate_qparams()
-                    return act_scale * weight_scale, weight_zp
-
-                bias_qspec = DerivedQuantizationSpec(
-                    derived_from=[(input_act, node), (weight, node)],
-                    derive_qparams_fn=derive_qparams_fn,
-                    dtype=torch.int32,
-                    quant_min=-(2**31),
-                    quant_max=2**31 - 1,
-                    qscheme=torch.per_channel_symmetric,
-                    ch_axis=0,
-                )
-                node.meta["quantization_annotation"].input_qspec_map[bias] = bias_qspec
-
-        
         return model
 
     def validate(self, model: torch.fx.GraphModule) -> None:
