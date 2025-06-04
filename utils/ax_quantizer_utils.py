@@ -429,6 +429,10 @@ def _annotate_conv(
                         torch.ops.aten.batch_norm.default
                     ]:
                         continue
+            else:
+                if not has_bn:
+                    # hack: relu 的上一个算子被 match 到的也是 relu ？
+                    sub_match.name_node_map["conv"] = sub_match.name_node_map["output"].args[0]
             matches.append(sub_match)
 
     # Annotate nodes returned in the matches
@@ -606,6 +610,10 @@ def _annotate_conv(
                         torch.ops.aten.batch_norm.default
                     ]:
                         continue
+            else:
+                if not has_bn:
+                    # hack: relu 的上一个算子被 match 到的也是 relu ？
+                    sub_match.name_node_map["conv"] = sub_match.name_node_map["output"].args[0]
             matches.append(sub_match)
 
     # Annotate nodes returned in the matches

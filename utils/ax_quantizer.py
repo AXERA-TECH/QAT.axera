@@ -296,7 +296,7 @@ class AXQuantizer(Quantizer):
         "avgpool2d",  # adaptive_avg_pool2d
         "concat",  # "cat"
         "conv",  # conv, conv_relu, conv_bn, conv_bn_relu
-        # "convtranspose",  # conv_transpose_relu, conv_transpose_bn, conv_transpose_bn_relu
+        "convtranspose",  # conv_transpose_relu, conv_transpose_bn, conv_transpose_bn_relu
         "layernorm",
         "linear",  # linear, linaer_relu
         "matmul",
