@@ -64,7 +64,10 @@ def main():
         weight_type=QuantType.QInt8,
         extra_options={
         "QDQKeepRemovableActivations": True,
-        "OpTypesToExcludeOutputQuantization": ["Conv"],
+        "QuantizeBias": False,
+
+        "ForceQuantizeNoInputCheck": True,
+        # "OpTypesToExcludeOutputQuantization": ["Conv", "Add"],
         }
         # optimize_model=False, 
     )
@@ -79,3 +82,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
