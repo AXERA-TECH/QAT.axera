@@ -39,7 +39,7 @@ def get_args():
         type=QuantFormat.from_string,
         choices=list(QuantFormat),
     )
-    parser.add_argument("--per_channel", default=False, type=bool)
+    parser.add_argument("--per_channel", default=True, type=bool)
     args = parser.parse_args()
     return args
 
@@ -61,15 +61,17 @@ def main():
         dr,
         quant_format=args.quant_format,
         per_channel=args.per_channel,
+        activation_type=QuantType.QInt8,
         weight_type=QuantType.QInt8,
+        op_types_to_quantize=["ReduceMean", "Conv", "Add", "Relu", "Reshape", "Gemm", "MaxPool"],
+    
         extra_options={
+        "QuantizeBias": False,    
         "QDQKeepRemovableActivations": True,
-        "QuantizeBias": False,
-
         "ForceQuantizeNoInputCheck": True,
-        # "OpTypesToExcludeOutputQuantization": ["Conv", "Add"],
+        "OpTypesToExcludeOutputQuantization": ["Conv", "Add"],
         }
-        # optimize_model=False, 
+        
     )
     print("Calibrated and quantized model saved.")
 
