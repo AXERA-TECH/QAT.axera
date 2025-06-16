@@ -5,8 +5,8 @@ from torch.ao.quantization.quantizer.xnnpack_quantizer import (
     get_symmetric_quantization_config,
 )
 from torch.ao.quantization.quantize_pt2e import (
-  prepare_qat_pt2e,
-  convert_pt2e,
+    prepare_qat_pt2e,
+    convert_pt2e,
 )
 
 # from utils.quantizer import (
