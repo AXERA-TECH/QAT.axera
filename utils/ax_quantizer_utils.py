@@ -133,6 +133,8 @@ def _all_users_annotate_equal(input_node: Node, node: Node):
         if other == node:
             continue
         other_qspec = other.meta["quantization_annotation"].input_qspec_map[input_node] if "quantization_annotation" in other.meta else None
+        if isinstance(other_qspec, SharedQuantizationSpec):
+            continue
         if not _quant_spec_equal(other_qspec, input_qspec):
             return False
     return True
@@ -416,19 +418,18 @@ def _annotate_conv(
             if not has_relu:
                 output_node = sub_match.name_node_map["output"]
                 users = list(output_node.users.keys())
-                if len(users) != 1:
-                    continue
-                next_node = users[0]
-                if next_node.op == "call_function" and next_node.target in [
-                    torch.ops.aten.relu.default,
-                    torch.ops.aten.relu_.default,
-                ]:
-                    continue
-                if not has_bn:
+                if len(users) == 1:
+                    next_node = users[0]
                     if next_node.op == "call_function" and next_node.target in [
-                        torch.ops.aten.batch_norm.default
+                        torch.ops.aten.relu.default,
+                        torch.ops.aten.relu_.default,
                     ]:
                         continue
+                    if not has_bn:
+                        if next_node.op == "call_function" and next_node.target in [
+                            torch.ops.aten.batch_norm.default
+                        ]:
+                            continue
             else:
                 if not has_bn:
                     # hack: relu 的上一个算子被 match 到的也是 relu ？
@@ -501,7 +502,7 @@ def _annotate_conv(
 
 
 @register_annotator("convtranspose")
-def _annotate_conv(
+def _annotate_convtranspose(
     gm: torch.fx.GraphModule,
     quantization_config: Optional[QuantizationConfig],
     module_names: List[str] = None,
@@ -597,19 +598,18 @@ def _annotate_conv(
             if not has_relu:
                 output_node = sub_match.name_node_map["output"]
                 users = list(output_node.users.keys())
-                if len(users) != 1:
-                    continue
-                next_node = users[0]
-                if next_node.op == "call_function" and next_node.target in [
-                    torch.ops.aten.relu.default,
-                    torch.ops.aten.relu_.default,
-                ]:
-                    continue
-                if not has_bn:
+                if len(users) == 1:
+                    next_node = users[0]
                     if next_node.op == "call_function" and next_node.target in [
-                        torch.ops.aten.batch_norm.default
+                        torch.ops.aten.relu.default,
+                        torch.ops.aten.relu_.default,
                     ]:
                         continue
+                    if not has_bn:
+                        if next_node.op == "call_function" and next_node.target in [
+                            torch.ops.aten.batch_norm.default
+                        ]:
+                            continue
             else:
                 if not has_bn:
                     # hack: relu 的上一个算子被 match 到的也是 relu ？
@@ -1014,7 +1014,7 @@ def _annotate_matmul(
 
 
 @register_annotator("gridsample")
-def _annotate_matmul(
+def _annotate_gridsample(
     gm: torch.fx.GraphModule,
     quantization_config: Optional[QuantizationConfig],
     module_names: List[str] = None,
@@ -1326,6 +1326,7 @@ def _is_share_obs_or_fq_op(op: Callable) -> bool:
         torch.ops.aten.view_copy.default,
         torch.ops.aten.view.default,
         torch.ops.aten.flatten.using_ints,
+        torch.ops.aten.reshape.default,
         # squeeze
         torch.ops.aten.squeeze.dim,
         torch.ops.aten.squeeze_copy.dim,
