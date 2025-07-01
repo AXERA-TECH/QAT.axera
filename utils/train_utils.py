@@ -158,7 +158,7 @@ def evaluate_np(sess, data_loader_test):
     return top1, top5
 
 
-def evaluate(model, data_loader_test):
+def evaluate(model, data_loader_test, total_size=None):
     _logger = logging.getLogger("resnet:")
     if isinstance(model, torch.fx.graph_module.GraphModule):
         torch.ao.quantization.move_exported_model_to_eval(model)
@@ -171,6 +171,8 @@ def evaluate(model, data_loader_test):
 
     with torch.no_grad():
         for i, (image, target) in enumerate(data_loader_test):
+            if total_size is not None and i >= total_size:
+                return top1, top5
             image = image.to(device)
             target = target.to(device)
             output = model(image)
