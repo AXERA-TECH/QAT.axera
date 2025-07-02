@@ -1,5 +1,17 @@
 
-展示多阶段推理方法
+切子图多阶段推理方法
+
+### 训练
+运行
+python3 -m resnet50.train
+确保 ./resnet50/checkpoint/last_checkpoint.pth 存在
+
+### 推理
+运行
+python3 -m multi_stage.multi_stage_demo
+
+---
+切子图方法与多个 forward 分别独立推理方法的比较
 
 ### 修改 quantizer
 临时将权重量化由 per-channel 对称量化改为 per-tensor 对称量化，即
@@ -20,7 +32,7 @@ python3 -m resnet50.train
 
 ### 推理
 运行
-python3 -m multi_stage.multi_stage_demo
+python3 -m multi_stage.multi_stage_contrast_demo
 
 ### 预期结果
 上述 demo会进行5次推理，分别是：
