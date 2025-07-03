@@ -1388,6 +1388,8 @@ def propagate_annotation(model: torch.fx.GraphModule) -> None:
 
 # TODO: make the list of ops customizable
 def _convert_scalars_to_attrs(model: torch.fx.GraphModule) -> torch.fx.GraphModule:
+    device = next(model.parameters()).device if list(model.parameters()) else torch.device("cpu")
+
     for n in model.graph.nodes:
         if n.op != "call_function" or n.target not in [
             torch.ops.aten.add.Tensor,
@@ -1403,7 +1405,7 @@ def _convert_scalars_to_attrs(model: torch.fx.GraphModule) -> torch.fx.GraphModu
             prefix = "_tensor_constant_"
             get_new_attr_name = get_new_attr_name_with_prefix(prefix)
             tensor_constant_name = get_new_attr_name(model)
-            float_tensor = torch.tensor(float(args[i]))
+            float_tensor = torch.tensor(float(args[i])).to(device)
             model.register_buffer(tensor_constant_name, float_tensor)
             fake_mode = n.meta["val"].fake_mode
             with model.graph.inserting_before(n):
