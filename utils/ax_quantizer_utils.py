@@ -133,8 +133,10 @@ def _all_users_annotate_equal(input_node: Node, node: Node):
         if other == node:
             continue
         other_qspec = other.meta["quantization_annotation"].input_qspec_map[input_node] if "quantization_annotation" in other.meta else None
-        if isinstance(other_qspec, SharedQuantizationSpec):
+        if other_qspec is None or isinstance(other_qspec, SharedQuantizationSpec):
             continue
+        if input_qspec is None:
+            return False
         if not _quant_spec_equal(other_qspec, input_qspec):
             return False
     return True
@@ -399,7 +401,7 @@ def _annotate_conv(
     # Add `is_cuda` and `relu_is_inplace` dimensions
     combinations = itertools.product(  # type: ignore[assignment]
         combinations,
-        [True, False] if torch.cuda.is_available() else [False],  # is_cuda
+        [True] if torch.cuda.is_available() else [False],  # is_cuda
         [True, False],  # has_relu
         [True, False],  # relu_is_inplace
     )

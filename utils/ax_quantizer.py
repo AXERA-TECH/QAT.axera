@@ -199,26 +199,29 @@ def get_quantization_config(
 
 def get_config(config: Dict[str, Any]):
     is_symmetric = config["is_symmetric"]
-    input_dtype = DtypeConf(
-        dtype=tmp_dtype_map[config["input"]["dtype"]],
-        qmin=config["input"]["qmin"],
-        qmax=config["input"]["qmax"]
-    )
-
-    if "weight" in config:
-        weight_dtype = DtypeConf(
-            dtype=tmp_dtype_map[config["weight"]["dtype"]],
-            qmin=config["weight"]["qmin"],
-            qmax=config["weight"]["qmax"]
-        )
+    if config["input"]["dtype"] == "FP32":
+        quant_config = QuantConf()
     else:
-        weight_dtype = None
+        input_dtype = DtypeConf(
+            dtype=tmp_dtype_map[config["input"]["dtype"]],
+            qmin=config["input"]["qmin"],
+            qmax=config["input"]["qmax"]
+        )
 
-    quant_config = QuantConf(
-        input_dtype=input_dtype,
-        weight_dtype=weight_dtype,
-        output_dtype=input_dtype
-    )
+        if "weight" in config:
+            weight_dtype = DtypeConf(
+                dtype=tmp_dtype_map[config["weight"]["dtype"]],
+                qmin=config["weight"]["qmin"],
+                qmax=config["weight"]["qmax"]
+            )
+        else:
+            weight_dtype = None
+
+        quant_config = QuantConf(
+            input_dtype=input_dtype,
+            weight_dtype=weight_dtype,
+            output_dtype=input_dtype
+        )
     return is_symmetric, quant_config
 
 

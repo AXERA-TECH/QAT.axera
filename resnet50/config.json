@@ -14,7 +14,7 @@
     },
     "regional_configs": [
         {
-            "module_names": ["conv2d_1", "conv2d_2", "conv2d_3", "conv2d_4", "conv2d_5"],
+            "module_names": ["conv2d_1", "conv2d_2", "conv2d_3", "conv2d_4"],
             "module_type": "conv",
             "module_config": {
                 "is_symmetric": false,
@@ -36,9 +36,17 @@
             "module_config": {
                 "is_symmetric": false,
                 "input": {
-                    "dtype": "U16",
-                    "qmin": 0,
-                    "qmax": 65535
+                    "dtype": "FP32"
+                }
+            }
+        },
+        {
+            "module_names": ["conv2d_5"],
+            "module_type": "conv",
+            "module_config": {
+                "is_symmetric": false,
+                "input": {
+                    "dtype": "FP32"
                 }
             }
         }
