@@ -125,31 +125,29 @@ def _quant_spec_equal(qspec1: QuantizationSpec, qspec2: QuantizationSpec):
     )
 
 
-def _all_users_annotate_equal(input_node: Node, node: Node):
-    sibling_nodes = input_node.users
-    assert node in sibling_nodes
-    input_qspec = node.meta["quantization_annotation"].input_qspec_map[input_node]
-    for other in sibling_nodes:
-        if other == node:
-            continue
-        other_qspec = other.meta["quantization_annotation"].input_qspec_map[input_node] if "quantization_annotation" in other.meta else None
+def _all_users_annotate_equal(input_node: Node, input_qspec: QuantizationSpec):
+    if input_qspec is None or isinstance(input_qspec, SharedQuantizationSpec):
+            return False
+
+    for node in input_node.users:
+        other_qspec = node.meta["quantization_annotation"].input_qspec_map[input_node] if "quantization_annotation" in node.meta else None
         if other_qspec is None or isinstance(other_qspec, SharedQuantizationSpec):
             continue
-        if input_qspec is None:
-            return False
         if not _quant_spec_equal(other_qspec, input_qspec):
             return False
     return True
 
 
 def _update_last_node_output_qspec(last_node: Node, node: Node, output_qspec: QuantizationSpec):
-    if len(list(last_node.users.keys())) == 1 or _all_users_annotate_equal(last_node, node):
+    input_qspec = node.meta["quantization_annotation"].input_qspec_map[last_node]
+    if len(list(last_node.users.keys())) == 1 or _all_users_annotate_equal(last_node, input_qspec):
         if "quantization_annotation" in last_node.meta:
             if isinstance(last_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
                 prev_node = last_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                # while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec):
-                #     prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
-                if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, last_node):
+                while isinstance(prev_node.meta["quantization_annotation"].output_qspec, SharedQuantizationSpec)\
+                    and (len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_qspec)):
+                    prev_node = prev_node.meta["quantization_annotation"].output_qspec.edge_or_node
+                if len(list(prev_node.users.keys())) == 1 or _all_users_annotate_equal(prev_node, input_qspec):
                     prev_node.meta["quantization_annotation"].output_qspec = output_qspec
             elif isinstance(last_node.meta["quantization_annotation"].output_qspec, QuantizationSpec):
                 last_node.meta["quantization_annotation"].output_qspec = output_qspec
@@ -1349,6 +1347,7 @@ def _is_share_obs_or_fq_op(op: Callable) -> bool:
         torch.ops.aten.hardtanh_.default,
         torch.ops.aten.mean.default,
         torch.ops.aten.mean.dim,
+        torch.ops.aten.slice.Tensor,
         torch.ops.aten.slice_copy.Tensor,
     ]
 
