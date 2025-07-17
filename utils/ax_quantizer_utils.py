@@ -465,37 +465,67 @@ def _annotate_conv(
             partition.append(bias_node)
 
         if is_global:
-            if _is_annotated(partition):
-                continue
-            # Annotate conv inputs and pattern output
-            input_qspec_map = {}
-            input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
-            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
-            if bias_node is not None:
-                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
-            conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                input_qspec_map=input_qspec_map,
-                _annotated=True,
-            )
-            if output_node == conv_node:
-                conv_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
-            else:
-                output_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                    output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
+            # if _is_annotated(partition):
+            #     continue
+            if not _is_annotated(partition[:1]) and _is_annotated(partition[1:]):
+                annotated_conv = None
+                for node in weight_node.users:
+                    if _is_annotated([node]):
+                        annotated_conv = node
+                        break
+
+                input_qspec_map = {}
+                input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+                input_qspec_map[weight_node] = SharedQuantizationSpec((weight_node, annotated_conv))
+                if bias_node is not None:
+                    input_qspec_map[bias_node] = SharedQuantizationSpec((bias_node, annotated_conv))
+                conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                    input_qspec_map=input_qspec_map,
                     _annotated=True,
                 )
-            _mark_nodes_as_annotated(partition)
+                if output_node == conv_node:
+                    conv_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
+                else:
+                    output_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                        output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
+                        _annotated=True,
+                    )
+                _mark_nodes_as_annotated([conv_node])
+            elif not _is_annotated(partition):
+                # Annotate conv inputs and pattern output
+                input_qspec_map = {}
+                input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+                input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+                if bias_node is not None:
+                    input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
+                conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                    input_qspec_map=input_qspec_map,
+                    _annotated=True,
+                )
+                if output_node == conv_node:
+                    conv_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
+                else:
+                    output_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                        output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
+                        _annotated=True,
+                    )
+                _mark_nodes_as_annotated(partition)
+            else:
+                continue
         else:
             if module_names is not None and conv_node.name not in module_names:
                 continue
             if not _is_annotated(partition):
                 assert False
             # Annotate node inputs and last node output
+            old_input_qspec_map = conv_node.meta["quantization_annotation"].input_qspec_map
             input_qspec_map = {}
             input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
-            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            input_qspec_map[weight_node] = old_input_qspec_map[weight_node] \
+                if isinstance(old_input_qspec_map[weight_node], SharedQuantizationSpec) else get_weight_qspec(quantization_config)
             if bias_node is not None:
-                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
+                input_qspec_map[bias_node] = old_input_qspec_map[bias_node] \
+                    if isinstance(old_input_qspec_map[bias_node], SharedQuantizationSpec) else get_bias_qspec(quantization_config)
             conv_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
             _update_last_node_output_qspec(input_node, conv_node, get_input_act_qspec(quantization_config))
     return

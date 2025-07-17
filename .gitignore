@@ -3,4 +3,5 @@
 dataset
 *.onnx
 *.pth
+*.npy
 outputs-4w8f

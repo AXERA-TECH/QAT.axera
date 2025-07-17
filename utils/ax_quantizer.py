@@ -263,6 +263,27 @@ def load_config(config_file: str):
     return global_quantization_config, regional_quantization_configs
 
 
+def remove_reused_bn_param_hack(model: torch.fx.GraphModule):
+    for node in model.graph.nodes:
+        if (
+            node.target == torch.ops.aten.add_.Tensor
+            and node.args[1] == 1
+            and torch.nn.modules.batchnorm.BatchNorm2d
+            in [val[1] for val in node.meta["source_fn_stack"]]
+        ):
+            last_node = node.args[0]
+            if last_node.op != "get_attr":
+                assert (
+                    last_node.target == torch.ops.aten.add_.Tensor
+                    and last_node.op == "call_function"
+                    and last_node.args[0].op == "get_attr"
+                    and last_node.args[1] == 1
+                    and torch.nn.modules.batchnorm.BatchNorm2d
+                    in [val[1] for val in last_node.meta["source_fn_stack"]]
+                )
+                node.args = (last_node.args[0], node.args[1])
+
+
 class AXQuantizer(Quantizer):
     STATIC_QAT_ONLY_OPS = [
         "conv_bn_relu",
@@ -312,8 +333,10 @@ class AXQuantizer(Quantizer):
         "softmax",
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, annotate_bias: bool = True) -> None:
         super().__init__()
+        self._annotate_bias = annotate_bias
+
         # init global
         self.global_config: Optional[QuantizationConfig] = None
         # init regional
@@ -384,7 +407,8 @@ class AXQuantizer(Quantizer):
                     continue
                 OP_TO_ANNOTATOR[module_type](model, module_config, module_names, is_global=False)
 
-        annotate_bias(model)
+        if self._annotate_bias:
+            annotate_bias(model)
 
         return model
 
