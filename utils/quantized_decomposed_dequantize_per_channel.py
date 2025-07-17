@@ -20,8 +20,33 @@ def quantized_decomposed_dequantize_per_channel(
     out_dtype: Optional[int] = None,
 ) -> TensorType:
     # from IPython import embed; embed()
-    zero_points = op.Cast(zero_points, to=input.dtype)
+    zero_points = op.Cast(zero_points, to=dtype)
     dequantized = op.DequantizeLinear(
+        input,
+        scales,
+        zero_points,
+        axis=axis,
+    )
+    return dequantized
+
+
+@torch_op(
+    ("quantized_decomposed::quantize_per_channel",),
+    trace_only=True,
+)
+def quantized_decomposed_quantize_per_channel(
+    input: TensorType,
+    scales: TensorType,
+    zero_points: TensorType,
+    axis: int,
+    quant_min: int,
+    quant_max: int,
+    dtype: int,
+    out_dtype: Optional[int] = None,
+) -> TensorType:
+    # from IPython import embed; embed()
+    zero_points = op.Cast(zero_points, to=dtype)
+    dequantized = op.QuantizeLinear(
         input,
         scales,
         zero_points,

@@ -119,7 +119,7 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 
-def evaluate_np(sess, data_loader_test):
+def evaluate_np(sess, data_loader_test, total_size=None):
     _logger = logging.getLogger("resnet:")
     # _logger.setLevel(logging.INFO)
 
@@ -129,6 +129,8 @@ def evaluate_np(sess, data_loader_test):
     end = time.time()
 
     for i, (image, target) in enumerate(data_loader_test):
+        if total_size is not None and i >= total_size:
+            return top1, top5
 
         image = image.numpy()
         target = target.numpy()
