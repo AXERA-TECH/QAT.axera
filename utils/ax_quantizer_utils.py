@@ -475,7 +475,7 @@ def _annotate_conv(
                         break
 
                 input_qspec_map = {}
-                input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+                input_qspec_map[input_node] = SharedQuantizationSpec((annotated_conv.args[0], annotated_conv))
                 input_qspec_map[weight_node] = SharedQuantizationSpec((weight_node, annotated_conv))
                 if bias_node is not None:
                     input_qspec_map[bias_node] = SharedQuantizationSpec((bias_node, annotated_conv))
