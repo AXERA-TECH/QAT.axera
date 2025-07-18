@@ -473,6 +473,10 @@ def _annotate_conv(
                     if _is_annotated([node]):
                         annotated_conv = node
                         break
+                annotated_output = annotated_conv
+                while "quantization_annotation" not in annotated_output.meta \
+                    or annotated_output.meta["quantization_annotation"].output_qspec is None:
+                    annotated_output = list(annotated_output.users.keys())[0]
 
                 input_qspec_map = {}
                 input_qspec_map[input_node] = SharedQuantizationSpec((annotated_conv.args[0], annotated_conv))
@@ -484,10 +488,10 @@ def _annotate_conv(
                     _annotated=True,
                 )
                 if output_node == conv_node:
-                    conv_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
+                    conv_node.meta["quantization_annotation"].output_qspec = SharedQuantizationSpec((annotated_conv, list(annotated_conv.users.keys())[0]))
                 else:
                     output_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                        output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
+                        output_qspec=SharedQuantizationSpec((annotated_output, list(annotated_output.users.keys())[0])),  # type: ignore[arg-type]
                         _annotated=True,
                     )
                 _mark_nodes_as_annotated([conv_node])
