@@ -57,6 +57,7 @@ class QuantizationConfig:
     input_activation: Optional[QuantizationSpec]
     output_activation: Optional[QuantizationSpec]
     weight: Optional[QuantizationSpec]
+    weight_trans: Optional[QuantizationSpec]
     bias: Optional[QuantizationSpec]
     # TODO: remove, since we can use observer_or_fake_quant_ctr to express this
     is_qat: bool = False
@@ -221,6 +222,24 @@ def get_weight_qspec(quantization_config: Optional[QuantizationConfig]):
     if quantization_config.weight is None:
         return None
     quantization_spec: QuantizationSpec = quantization_config.weight
+    if quantization_spec.qscheme not in [
+        torch.per_tensor_symmetric,
+        torch.per_channel_symmetric,
+        None,
+    ]:
+        raise ValueError(
+            f"Unsupported quantization_spec {quantization_spec} for weight"
+        )
+    return quantization_spec
+
+
+def get_weight_trans_qspec(quantization_config: Optional[QuantizationConfig]):
+    if quantization_config is None:
+        return None
+    assert quantization_config is not None
+    if quantization_config.weight is None:
+        return None
+    quantization_spec: QuantizationSpec = quantization_config.weight_trans
     if quantization_spec.qscheme not in [
         torch.per_tensor_symmetric,
         torch.per_channel_symmetric,
@@ -684,7 +703,7 @@ def _annotate_convtranspose(
             # Annotate conv inputs and pattern output
             input_qspec_map = {}
             input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
-            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_trans_qspec(quantization_config)
             if bias_node is not None:
                 input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
             conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
@@ -707,7 +726,7 @@ def _annotate_convtranspose(
             # Annotate node inputs and last node output
             input_qspec_map = {}
             input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
-            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_trans_qspec(quantization_config)
             if bias_node is not None:
                 input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
             conv_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
