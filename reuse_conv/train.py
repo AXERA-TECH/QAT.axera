@@ -22,6 +22,7 @@ from utils.ax_quantizer import(
 )
 from utils.train_utils import dynamo_export, onnx_simplify
 import utils.quantized_decomposed_dequantize_per_channel
+from utils.extract import extract_subgraph
 from IPython import embed
 
 # Set up warnings
@@ -37,10 +38,25 @@ warnings.filterwarnings(
 )
 
 
+class Net_Loop_Module1(nn.Module):
+    def __init__(self, module0, module1, module2):
+        super().__init__()
+        self.module0 = module0
+        self.module1 = module1
+        self.module2 = module2
+    
+    def forward(self, x):
+        x = self.module0(x)
+        for i in range(2):
+            x = self.module1(x)
+        x = self.module2(x)
+
+        return x
+
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.loop = 3
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels=64, out_channels=64, kernel_size=1, stride=1, padding=0, bias=True),
             nn.BatchNorm2d(64),  # 去掉 BN 不支持
@@ -48,8 +64,7 @@ class Net(nn.Module):
         )
 
     def forward(self, x):
-        for i in range(self.loop):
-            x = self.conv(x)  # RuntimeError: Tried to erase Node add_ but it still had 1 users in the graph: {add__1: None}!
+        x = self.conv(x)
         return x
 
 
@@ -58,9 +73,11 @@ def train():
     input = torch.rand(1, 64, 256, 768).to("cuda")
 
     # float_model
-    float_model = Net().to("cuda")
-    float_path = "./reuse_conv/tmp_float.onnx"
-    dynamo_export(float_model, input, float_path)
+    float_model0 = Net().to("cuda")
+    float_model1 = Net().to("cuda")
+    float_model2 = Net().to("cuda")
+    # float_path = "./tmp_float.onnx"
+    # dynamo_export(float_model, input, float_path)
 
     # set quantizer
     global_config, regional_configs = load_config("./reuse_conv/config.json")
@@ -69,13 +86,21 @@ def train():
     quantizer.set_regional(regional_configs)
 
     # export qat model
-    exported_model = torch.export.export_for_training(float_model, (input,)).module()
-    prepared_model = prepare_qat_pt2e(exported_model, quantizer)
+    exported_model0 = torch.export.export_for_training(float_model0, (input,)).module()
+    exported_model1 = torch.export.export_for_training(float_model1, (input,)).module()
+    exported_model2 = torch.export.export_for_training(float_model2, (input,)).module()
+
+    prepared_model0 = prepare_qat_pt2e(exported_model0, quantizer)
+    prepared_model1 = prepare_qat_pt2e(exported_model1, quantizer)
+    prepared_model2 = prepare_qat_pt2e(exported_model2, quantizer)
+
+    new_model = Net_Loop_Module1(prepared_model0, prepared_model1, prepared_model2)
+
 
     # train
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(prepared_model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
-    output = prepared_model(input)
+    optimizer = torch.optim.SGD(new_model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
+    output = new_model(input)
     target = torch.rand(1, 64, 256, 768).to("cuda")  # 随机一个 gt 训一轮
 
     loss = criterion(output, target)
@@ -83,24 +108,25 @@ def train():
     loss.backward()
     optimizer.step()
 
-    torch.save(prepared_model.state_dict(), "./reuse_conv/tmp.pth")
+    # torch.save(prepared_model.state_dict(), "./tmp.pth")
 
     # convert
-    remove_reused_bn_param_hack(prepared_model)
-    quantized_model = convert_pt2e(prepared_model)
-
-    # save input & output for test
-    gt = quantized_model(input)
-    np.save("./reuse_conv/input.npy", input.cpu().numpy())
-    np.save("./reuse_conv/gt.npy", gt.cpu().numpy())
+    # remove_reused_bn_param_hack(new_model.module1)
+    quantized_model0 = convert_pt2e(new_model.module0)
+    quantized_model1 = convert_pt2e(new_model.module1)
+    quantized_model2 = convert_pt2e(new_model.module2)
 
     # export
-    qat_path = "./reuse_conv/tmp_qat.onnx"
-    dynamo_export(quantized_model, input, qat_path)
+    qat_path = "./tmp0_qat.onnx"
+    dynamo_export(quantized_model0, input, qat_path)
+    qat_path = "./tmp1_qat.onnx"
+    dynamo_export(quantized_model1, input, qat_path)
+    qat_path = "./tmp2_qat.onnx"
+    dynamo_export(quantized_model2, input, qat_path)
 
     # onnx simplify
-    sim_path = "./reuse_conv/tmp_qat_sim.onnx"
-    onnx_simplify(qat_path, sim_path)
+    # sim_path = "./tmp_qat_sim.onnx"
+    # onnx_simplify(qat_path, sim_path)
 
 
 if __name__ == "__main__":
