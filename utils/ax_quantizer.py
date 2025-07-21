@@ -174,6 +174,40 @@ def get_quantization_config(
     else:
         weight_quantization_spec = None
 
+    # convtranspose weight
+    weight_qscheme = torch.per_channel_symmetric
+    extra_args: Dict[str, Any] = {"eps": 2**-12}
+    if is_qat:
+        if weight_qscheme == torch.per_tensor_symmetric:
+            extra_args["observer"] = MovingAverageMinMaxObserver
+        else:
+            extra_args["observer"] = MovingAveragePerChannelMinMaxObserver.with_args(ch_axis=1)  # type: ignore[dict-item]
+    
+    weight_observer_or_fake_quant_ctr: _ObserverOrFakeQuantizeConstructor = (
+        MinMaxObserver
+    )
+    if is_qat:
+        # TODO: qat + per channel?
+        weight_observer_or_fake_quant_ctr = FakeQuantize
+    else:
+        weight_observer_or_fake_quant_ctr = PerChannelMinMaxObserver
+
+    weight_dtype = quant_config.weight_dtype
+    if weight_dtype is not None:
+        weight_trans_quantization_spec = QuantizationSpec(
+            dtype=weight_dtype.dtype,
+            quant_min=weight_dtype.qmin,
+            quant_max=weight_dtype.qmax,
+            qscheme=weight_qscheme,
+            ch_axis=0,
+            is_dynamic=False,
+            observer_or_fake_quant_ctr=weight_observer_or_fake_quant_ctr.with_args(
+                **extra_args
+            ),
+        )
+    else:
+        weight_trans_quantization_spec = None
+
     # bias
     bias_quantization_spec = None
 
@@ -182,6 +216,7 @@ def get_quantization_config(
             input_quantization_spec,
             None,
             weight_quantization_spec,
+            weight_trans_quantization_spec,
             bias_quantization_spec,
             is_qat,
         )
@@ -190,6 +225,7 @@ def get_quantization_config(
             input_quantization_spec,
             output_quantization_spec,
             weight_quantization_spec,
+            weight_trans_quantization_spec,
             bias_quantization_spec,
             is_qat,
         )
