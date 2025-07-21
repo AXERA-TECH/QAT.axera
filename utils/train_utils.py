@@ -1,7 +1,9 @@
 import time
 import onnx
+import inspect
 import logging
 import numpy as np
+import onnxruntime as ort
 
 import torch
 
@@ -134,7 +136,12 @@ def evaluate_np(sess, data_loader_test, total_size=None):
 
         image = image.numpy()
         target = target.numpy()
-        output = sess.run(None, {"x_0": image})[0]
+        if isinstance(sess, ort.InferenceSession):
+            output = sess.run(None, {"x_0": image})[0]
+        elif inspect.isfunction(sess):
+            output = sess(image)
+        else:
+            assert False
         batch = output.shape[0]
 
         acc1, acc5 = accuracy_np(output, target)

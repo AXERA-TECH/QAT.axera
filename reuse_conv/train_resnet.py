@@ -35,8 +35,35 @@ from utils.train_utils import (
 import utils.quantized_decomposed_dequantize_per_channel
 
 
-class ReuseResNet(ResNet):
+class ResNet_stage1(ResNet):
+    def __init__(
+        self,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        layers: List[int],
+        num_classes: int = 1000,
+        zero_init_residual: bool = False,
+        groups: int = 1,
+        width_per_group: int = 64,
+        replace_stride_with_dilation: Optional[List[bool]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
+        super(ResNet_stage1, self).__init__(block=block, layers=layers)
+    
+    def _forward_impl(self, x: Tensor) -> Tensor:
+        # See note [TorchScript super()]
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+
+        return x
+
+    
+class ResNet_stage2(ResNet):
     """
+    额外添加的需要循环调用的部分
     """
     def __init__(
         self,
@@ -49,32 +76,56 @@ class ReuseResNet(ResNet):
         replace_stride_with_dilation: Optional[List[bool]] = None,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
     ) -> None:
-        super(ReuseResNet, self).__init__(block=block, layers=layers)
-        if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
-        self.inplanes = 64
-        self.reused_conv = nn.Conv2d(self.inplanes, self.inplanes, kernel_size=3, stride=1, padding=1)
-        self.reused_bn = norm_layer(self.inplanes)
-        self.reused_relu = nn.ReLU(inplace=True)
+        super(ResNet_stage2, self).__init__(block=block, layers=layers)
+        self.tmp_conv1 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=1, stride=1, padding=0, bias=True)
+        self.tmp_bn1 = nn.BatchNorm2d(256)
+        self.tmp_relu1 = nn.ReLU(inplace=True)
 
+        self.tmp_conv2 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=1, padding=1, bias=True)
+        self.tmp_bn2 = nn.BatchNorm2d(256)
+        self.tmp_relu2 = nn.ReLU(inplace=True)
+
+        self.tmp_conv3 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=1, stride=1, padding=0, bias=True)
+        self.tmp_bn3 = nn.BatchNorm2d(256)
+        self.tmp_relu3 = nn.ReLU(inplace=True)
     
     def _forward_impl(self, x: Tensor) -> Tensor:
         # See note [TorchScript super()]
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
+        identity = x
 
-        # 强行复用
-        x = self.reused_conv(x)
-        x = self.reused_bn(x)  # 去掉 BN 不支持
-        x = self.reused_relu(x)
-        x = self.reused_conv(x)
-        x = self.reused_bn(x)  # 去掉 BN 不支持
-        x = self.reused_relu(x)
+        out = self.tmp_conv1(x)
+        out = self.tmp_bn1(out)
+        out = self.tmp_relu1(out)
 
-        x = self.maxpool(x)
+        out = self.tmp_conv2(out)
+        out = self.tmp_bn2(out)
+        out = self.tmp_relu2(out)
 
-        x = self.layer1(x)
+        out = self.tmp_conv3(out)
+        out = self.tmp_bn3(out)
+
+        out += identity
+        out = self.tmp_relu3(out)
+
+        return out
+
+
+class ResNet_stage3(ResNet):
+    def __init__(
+        self,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        layers: List[int],
+        num_classes: int = 1000,
+        zero_init_residual: bool = False,
+        groups: int = 1,
+        width_per_group: int = 64,
+        replace_stride_with_dilation: Optional[List[bool]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
+        super(ResNet_stage3, self).__init__(block=block, layers=layers)
+    
+    def _forward_impl(self, x: Tensor) -> Tensor:
+        # See note [TorchScript super()]
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
@@ -86,17 +137,47 @@ class ReuseResNet(ResNet):
         return x
 
 
+class ThreeStageResNet(nn.Module):
+    """
+    将子模型链接起来，需要循环调用的部分在这里循环
+    """
+    def __init__(self, stage1, stage2, stage3):
+        super().__init__()
+        self.stage1 = stage1
+        self.stage2 = stage2
+        self.stage3 = stage3
+    
+    def forward(self, x):
+        x = self.stage1(x)
+        for i in range(2):
+            x = self.stage2(x)
+        x = self.stage3(x)
+
+        return x
+
+
 def train():
     # load data
     data_loader, data_loader_test = imagenet_data_loaders("dataset/imagenet/")
-    example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
+    example_inputs_stage1 = (torch.rand(1, 3, 224, 224).to("cuda"),)
+    example_inputs_stage2 = (torch.rand(1, 256, 56, 56).to("cuda"),)
+    example_inputs_stage3 = (torch.rand(1, 256, 56, 56).to("cuda"),)
 
     # set float model
-    float_model = ReuseResNet(Bottleneck, [3, 4, 6, 3]).to("cuda")
+    float_model_stage1 = ResNet_stage1(Bottleneck, [3, 4, 6, 3]).to("cuda")
+    float_model_stage2 = ResNet_stage2(Bottleneck, [3, 4, 6, 3]).to("cuda")
+    float_model_stage3 = ResNet_stage3(Bottleneck, [3, 4, 6, 3]).to("cuda")
     state_dict = torch.load("./resnet50/resnet50_pretrained_float.pth", weights_only=True)
-    float_model.load_state_dict(state_dict, strict=False)
-    float_path = "./reuse_conv/resnet50_float.onnx"
-    dynamo_export(float_model, example_inputs, float_path)
+    float_model_stage1.load_state_dict(state_dict)
+    # float_model_stage2.load_state_dict(state_dict)
+    float_model_stage3.load_state_dict(state_dict)
+
+    float_path_stage1 = "./reuse_conv/resnet50_float_stage1.onnx"
+    dynamo_export(float_model_stage1, example_inputs_stage1, float_path_stage1)
+    float_path_stage2 = "./reuse_conv/resnet50_float_stage2.onnx"
+    dynamo_export(float_model_stage2, example_inputs_stage2, float_path_stage2)
+    float_path_stage3 = "./reuse_conv/resnet50_float_stage3.onnx"
+    dynamo_export(float_model_stage3, example_inputs_stage3, float_path_stage3)
 
     # quantizer
     global_config, regional_configs = load_config("./reuse_conv/config.json")
@@ -104,8 +185,13 @@ def train():
     quantizer.set_global(global_config)
     quantizer.set_regional(regional_configs)
 
-    exported_model = torch.export.export_for_training(float_model, example_inputs).module()
-    prepared_model = prepare_qat_pt2e(exported_model, quantizer)
+    exported_model_stage1 = torch.export.export_for_training(float_model_stage1, example_inputs_stage1).module()
+    exported_model_stage2 = torch.export.export_for_training(float_model_stage2, example_inputs_stage2).module()
+    exported_model_stage3 = torch.export.export_for_training(float_model_stage3, example_inputs_stage3).module()
+    prepared_model_stage1 = prepare_qat_pt2e(exported_model_stage1, quantizer)
+    prepared_model_stage2 = prepare_qat_pt2e(exported_model_stage2, quantizer)
+    prepared_model_stage3 = prepare_qat_pt2e(exported_model_stage3, quantizer)
+    prepared_model = ThreeStageResNet(prepared_model_stage1, prepared_model_stage2, prepared_model_stage3)
 
     num_epochs = 5
     num_train_batches = 50
@@ -126,20 +212,43 @@ def train():
         #     top1, top5 = evaluate(quantized_model, data_loader_test)
         #     print('Epoch %d: Evaluation accuracy, %2.2f' % (nepoch, top1.avg))
 
-    torch.save(prepared_model.state_dict(), "./reuse_conv/resnet50.pth")
+    torch.save(prepared_model.stage1.state_dict(), "./reuse_conv/resnet50_stage1.pth")
+    torch.save(prepared_model.stage2.state_dict(), "./reuse_conv/resnet50_stage2.pth")
+    torch.save(prepared_model.stage3.state_dict(), "./reuse_conv/resnet50_stage3.pth")
 
     # evaluate
-    remove_reused_bn_param_hack(prepared_model)
-    quantized_model = convert_pt2e(prepared_model)
-    top1, top5 = evaluate(quantized_model, data_loader_test, total_size=100)
+    quantized_model_stage1 = convert_pt2e(prepared_model.stage1)
+    quantized_model_stage2 = convert_pt2e(prepared_model.stage2)
+    quantized_model_stage3 = convert_pt2e(prepared_model.stage3)
+
+    def quantized_model_forward(x):
+        torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage1)
+        torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage2)
+        torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage3)
+
+        x = quantized_model_stage1(x)
+        for i in range(2):
+            x = quantized_model_stage2(x)
+        x = quantized_model_stage3(x)
+
+        return x
+    top1, top5 = evaluate(quantized_model_forward, data_loader_test, total_size=100)
 
     # export
-    qat_path = "./reuse_conv/resnet50_qat.onnx"
-    dynamo_export(quantized_model, (example_inputs,), qat_path)
+    qat_path_stage1 = "./reuse_conv/resnet50_qat_stage1.onnx"
+    dynamo_export(quantized_model_stage1, (example_inputs_stage1,), qat_path_stage1)
+    qat_path_stage2 = "./reuse_conv/resnet50_qat_stage2.onnx"
+    dynamo_export(quantized_model_stage2, (example_inputs_stage2,), qat_path_stage2)
+    qat_path_stage3 = "./reuse_conv/resnet50_qat_stage3.onnx"
+    dynamo_export(quantized_model_stage3, (example_inputs_stage3,), qat_path_stage3)
 
-    # onnx simplify
-    sim_path = "./reuse_conv/resnet50_qat_sim.onnx"
-    onnx_simplify(qat_path, sim_path)
+    # # onnx simplify
+    sim_path_stage1 = "./reuse_conv/resnet50_qat_sim_stage1.onnx"
+    onnx_simplify(qat_path_stage1, sim_path_stage1)
+    sim_path_stage2 = "./reuse_conv/resnet50_qat_sim_stage2.onnx"
+    onnx_simplify(qat_path_stage2, sim_path_stage2)
+    sim_path_stage3 = "./reuse_conv/resnet50_qat_sim_stage3.onnx"
+    onnx_simplify(qat_path_stage3, sim_path_stage3)
 
 
 if __name__ == "__main__":
