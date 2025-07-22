@@ -1,3 +1,4 @@
+import copy
 import torch
 import onnxruntime as ort
 
@@ -26,9 +27,10 @@ from utils.train_utils import (
   imagenet_data_loaders,
 )
 from reuse_conv.train_resnet import(
-    ResNet_stage1,
-    ResNet_stage2,
-    ResNet_stage3,
+    ResNetStage1,
+    ResNetStage2,
+    ResNetStage3,
+    ResNetMultiStage,
     Bottleneck,
 )
 
@@ -38,9 +40,9 @@ def test():
     example_inputs_stage3 = (torch.rand(1, 256, 56, 56).to("cuda"),)
     # float model
     # float_model = load_model("./resnet50/resnet50_pretrained_float.pth", "resnet50").to("cuda")
-    float_model_stage1 = ResNet_stage1(Bottleneck, [3, 4, 6, 3]).to("cuda")
-    float_model_stage2 = ResNet_stage2(Bottleneck, [3, 4, 6, 3]).to("cuda")
-    float_model_stage3 = ResNet_stage3(Bottleneck, [3, 4, 6, 3]).to("cuda")
+    float_model_stage1 = ResNetStage1(Bottleneck, [3, 4, 6, 3]).to("cuda")
+    float_model_stage2 = ResNetStage2(Bottleneck, [3, 4, 6, 3]).to("cuda")
+    float_model_stage3 = ResNetStage3(Bottleneck, [3, 4, 6, 3]).to("cuda")
     state_dict = torch.load("./resnet50/resnet50_pretrained_float.pth", weights_only=True)
     float_model_stage1.load_state_dict(state_dict)
     # float_model_stage2.load_state_dict(state_dict)
@@ -62,6 +64,17 @@ def test():
     prepared_model_stage1.load_state_dict(torch.load("./reuse_conv/resnet50_stage1.pth"))
     prepared_model_stage2.load_state_dict(torch.load("./reuse_conv/resnet50_stage2.pth"))
     prepared_model_stage3.load_state_dict(torch.load("./reuse_conv/resnet50_stage3.pth"))
+    model = ResNetMultiStage(
+        Bottleneck,
+        [3, 4, 6, 3],
+        stage1=prepared_model_stage1,
+        stage2=prepared_model_stage2,
+        stage3=prepared_model_stage3,
+    ).to("cuda")
+    model.load_state_dict(torch.load("./reuse_conv/resnet50.pth"))
+
+    float_stage = copy.deepcopy(model)
+    float_stage.forward = float_stage._float_forward
     quantized_model_stage1 = convert_pt2e(prepared_model_stage1)
     quantized_model_stage2 = convert_pt2e(prepared_model_stage2)
     quantized_model_stage3 = convert_pt2e(prepared_model_stage3)
@@ -76,19 +89,25 @@ def test():
 
     # evaluate
     def quantized_model_forward(x):
+        float_stage.eval()
         torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage1)
         torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage2)
         torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage3)
 
         x = quantized_model_stage1(x)
         for i in range(2):
+            x = float_stage(x)
             x = quantized_model_stage2(x)
         x = quantized_model_stage3(x)
 
         return x
     def sess_forward(x):
+        float_stage.eval()
         x = sess_stage1.run(None, {"x_0": x})[0]
         for i in range(2):
+            x = torch.tensor(x).to("cuda")
+            x = float_stage(x)
+            x = x.cpu().numpy()
             x = sess_stage2.run(None, {"x_0": x})[0]
         x = sess_stage3.run(None, {"x_0": x})[0]
 
