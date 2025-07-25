@@ -1,3 +1,5 @@
+import re
+import onnx
 import torch  # Version: 2.6.0+cu118
 import torch.nn as nn
 
@@ -19,6 +21,7 @@ from utils.ax_quantizer import(
     AXQuantizer,
 )
 from utils.train_utils import dynamo_export, onnx_simplify
+from utils.quant_utils import fix_4bit_dtype
 import utils.quantized_decomposed_dequantize_per_channel
 
 # Set up warnings
@@ -65,11 +68,27 @@ quantizer.set_regional(regional_configs)
 # export qat model
 exported_model = torch.export.export_for_training(float_model, (input,)).module()
 prepared_model = prepare_qat_pt2e(exported_model, quantizer)
+
+# # train
+# criterion = torch.nn.CrossEntropyLoss()
+# optimizer = torch.optim.SGD(prepared_model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
+# output = prepared_model(input)
+# target = torch.rand(1, 32, 256, 768).to("cuda")  # 随机一个 gt 训一轮
+
+# loss = criterion(output, target)
+# optimizer.zero_grad()
+# loss.backward()
+# optimizer.step()
+
 quantized_model = convert_pt2e(prepared_model)
 
 # export
 qat_path = "./minimum/minimum_qat.onnx"
 dynamo_export(quantized_model, input, qat_path)
+
+# fix dtype
+fix_path = "./minimum/minimum_qat_fix.onnx"
+fix_4bit_dtype(qat_path, fix_path)
 
 # onnx simplify
 sim_path = "./minimum/minimum_qat_sim.onnx"
