@@ -82,7 +82,7 @@ def train():
 
     # onnx simplify
     sim_path = "./resnet50/resnet50_qat_sim.onnx"
-    onnx_simplify(qat_path, sim_path)
+    onnx_simplify(fix_path, sim_path)
 
 
 if __name__ == "__main__":

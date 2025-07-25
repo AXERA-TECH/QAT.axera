@@ -92,4 +92,4 @@ fix_4bit_dtype(qat_path, fix_path)
 
 # onnx simplify
 sim_path = "./minimum/minimum_qat_sim.onnx"
-onnx_simplify(qat_path, sim_path)
+onnx_simplify(fix_path, sim_path)
