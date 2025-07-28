@@ -21,7 +21,7 @@ from utils.ax_quantizer import(
     AXQuantizer,
 )
 from utils.train_utils import dynamo_export, onnx_simplify
-from utils.quant_utils import fix_4bit_dtype
+from utils.quant_utils import simplify_and_fix_4bit_dtype
 import utils.quantized_decomposed_dequantize_per_channel
 
 # Set up warnings
@@ -86,10 +86,6 @@ quantized_model = convert_pt2e(prepared_model)
 qat_path = "./minimum/minimum_qat.onnx"
 dynamo_export(quantized_model, input, qat_path)
 
-# fix dtype
-fix_path = "./minimum/minimum_qat_fix.onnx"
-fix_4bit_dtype(qat_path, fix_path)
-
-# onnx simplify
+# onnx simplify & fix dtype
 sim_path = "./minimum/minimum_qat_sim.onnx"
-onnx_simplify(fix_path, sim_path)
+simplify_and_fix_4bit_dtype(qat_path, sim_path)
