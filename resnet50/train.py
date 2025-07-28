@@ -25,7 +25,7 @@ from utils.train_utils import (
     onnx_simplify,
     evaluate,
 )
-from utils.quant_utils import fix_4bit_dtype
+from utils.quant_utils import simplify_and_fix_4bit_dtype
 import utils.quantized_decomposed_dequantize_per_channel
 
 
@@ -76,13 +76,9 @@ def train():
     qat_path = "./resnet50/resnet50_qat.onnx"
     dynamo_export(quantized_model, (example_inputs,), qat_path)
 
-    # fix dtype
-    fix_path = "./resnet50/resnet50_qat_fix.onnx"
-    fix_4bit_dtype(qat_path, fix_path)
-
-    # onnx simplify
+    # onnx simplify & fix dtype
     sim_path = "./resnet50/resnet50_qat_sim.onnx"
-    onnx_simplify(fix_path, sim_path)
+    simplify_and_fix_4bit_dtype(qat_path, sim_path)
 
 
 if __name__ == "__main__":
