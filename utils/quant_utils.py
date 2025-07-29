@@ -1,7 +1,7 @@
 import re
 import onnx
 import torch
-import onnxslim.third_party.onnx_graphsurgeon as gs
+import onnx_graphsurgeon as gs
 
 from onnxslim import slim
 from onnxruntime.quantization.quant_utils import pack_bytes_to_4bit

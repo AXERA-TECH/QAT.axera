@@ -27,6 +27,7 @@ wget -O resnet50/resnet50_pretrained_float.pth https://download.pytorch.org/mode
 cd QAT.axera
 mkdir -p resnet50/checkpoint
 python -m resnet50.train
+# 4bit 量化位宽时参考 resnet50/config_4w4f 配置，并用 simplify_and_fix_4bit_dtype 替代 onnx_simplify
 
 # test
 cd QAT.axera

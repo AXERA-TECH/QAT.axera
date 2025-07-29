@@ -78,7 +78,8 @@ def train():
 
     # onnx simplify & fix dtype
     sim_path = "./resnet50/resnet50_qat_sim.onnx"
-    simplify_and_fix_4bit_dtype(qat_path, sim_path)
+    # onnx_simplify(qat_path, sim_path)
+    simplify_and_fix_4bit_dtype(qat_path, sim_path)  # export 4bit feature & 4bit weight onnx
 
 
 if __name__ == "__main__":
