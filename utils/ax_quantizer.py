@@ -367,6 +367,7 @@ class AXQuantizer(Quantizer):
         "groupnorm",
         "silu",
         "softmax",
+        "split",
     ]
 
     def __init__(self, annotate_bias: bool = True) -> None:

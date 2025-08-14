@@ -4,6 +4,7 @@ import itertools
 from dataclasses import dataclass
 from typing import Callable, Dict, List, NamedTuple, Optional
 
+import operator
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -1359,6 +1360,57 @@ def _annotate_mha(
         #     cat_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
         #     for input_node in inputs:
         #         _update_last_node_output_qspec(input_node, cat_node, get_input_act_qspec(quantization_config))
+    return
+
+
+@register_annotator("split")
+def _annotate_split(
+    gm: torch.fx.GraphModule,
+    quantization_config: Optional[QuantizationConfig],
+    module_names: List[str] = None,
+    is_global: bool = True,
+) -> Optional[List[List[Node]]]:
+    for node in gm.graph.nodes:
+        if node.op != "call_function" or node.target not in [
+            torch.ops.aten.split_with_sizes.default,
+            torch.ops.aten.chunk.default,
+        ]:
+            continue
+
+        split_node = node
+        partition = [split_node]
+
+        users = []
+        for user in split_node.users.keys():
+            if (
+                isinstance(user, Node)
+                and user.op == "call_function"
+                and user.target in [
+                    operator.getitem,
+                ]
+            ):
+                users.append(user)
+                partition.append(user)
+
+        prev_node = split_node.args[0]
+        shared_qspec = SharedQuantizationSpec(prev_node)
+
+        if is_global:
+            if _is_annotated(partition):
+                continue
+            split_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                input_qspec_map={
+                split_node: shared_qspec,
+            },
+                _annotated=True,
+            )
+            for user in users:
+                user.meta["quantization_annotation"] = QuantizationAnnotation(
+                    output_qspec=shared_qspec,
+                    _annotated=True,
+                )
+        else:
+            assert False, "just set the previous node of [split]"
     return
 
 
