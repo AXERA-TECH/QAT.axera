@@ -1204,7 +1204,8 @@ def _annotate_softmax(
 ) -> Optional[List[List[Node]]]:
 
     aten_ops = [
-        torch.ops.aten._safe_softmax.default
+        torch.ops.aten._safe_softmax.default,
+        torch.ops.aten.softmax.int,
     ]
     _do_annotate_activate(
         gm,
