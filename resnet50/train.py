@@ -45,31 +45,72 @@ def train():
     quantizer.set_regional(regional_configs)
 
     exported_model = torch.export.export_for_training(float_model, example_inputs).module()
-    prepared_model = prepare_qat_pt2e(exported_model, quantizer)
+    prepared_model_qat = prepare_qat_pt2e(copy.deepcopy(exported_model), quantizer)
+
+    do_ptq = False
+    if do_ptq:
+        # ptq quantizer
+        global_config_ptq, regional_configs_ptq = load_config("./resnet50/config.json", is_qat=False)
+        quantizer_ptq = AXQuantizer()
+        quantizer_ptq.set_global(global_config_ptq)
+        quantizer_ptq.set_regional(regional_configs_ptq)
+
+        prepared_model_ptq = prepare_qat_pt2e(copy.deepcopy(exported_model), quantizer_ptq)
+        torch.ao.quantization.move_exported_model_to_eval(prepared_model_ptq)
+
+        # calibrate
+        calibration_size = 100
+        with torch.no_grad():
+            for i, (image, target) in enumerate(data_loader_test):
+                prepared_model_ptq(image.to('cuda'))
+                if i > calibration_size:
+                    break
+        # top1, top5 = evaluate(convert_pt2e(copy.deepcopy(prepared_model_ptq)), data_loader_test, total_size=1000)
+
+        # cp scale zp to qat
+        assert len(prepared_model_qat.graph.nodes) == len(prepared_model_ptq.graph.nodes)
+        with torch.no_grad():
+            for node_ptq, node_qat in zip(prepared_model_ptq.graph.nodes, prepared_model_qat.graph.nodes):
+                if node_ptq.op == "call_module" and node_ptq.target.startswith("activation_post_process"):
+                    assert node_qat.op == "call_module" and node_qat.target.startswith("activation_post_process")
+                    assert node_ptq.target == node_qat.target
+
+                    module_ptq = prepared_model_ptq.get_submodule(node_ptq.target)
+                    module_qat = prepared_model_qat.get_submodule(node_qat.target)
+
+                    scale, zero_point = module_ptq.calculate_qparams()
+
+                    module_qat.scale = scale
+                    module_qat.zero_point = zero_point.type(torch.int32)
+                    module_qat.activation_post_process.min_val = module_ptq.min_val
+                    module_qat.activation_post_process.max_val = module_ptq.max_val
+
+        # top1, top5 = evaluate(convert_pt2e(copy.deepcopy(prepared_model_qat)), data_loader_test, total_size=1000)
+
 
     num_epochs = 1
     num_train_batches = 10
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(prepared_model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
+    optimizer = torch.optim.SGD(prepared_model_qat.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
 
     # train
     num_epochs_between_evals = 2
     for nepoch in range(num_epochs):
-        train_one_epoch(prepared_model, criterion, optimizer, data_loader, "cuda", num_train_batches)
+        train_one_epoch(prepared_model_qat, criterion, optimizer, data_loader, "cuda", num_train_batches)
 
         checkpoint_path = "./resnet50/checkpoint/checkpoint_%s.pth" % nepoch
-        torch.save(prepared_model.state_dict(), checkpoint_path)
+        torch.save(prepared_model_qat.state_dict(), checkpoint_path)
 
         if (nepoch + 1) % num_epochs_between_evals == 0:
-            prepared_model_copy = copy.deepcopy(prepared_model)
+            prepared_model_copy = copy.deepcopy(prepared_model_qat)
             quantized_model = convert_pt2e(prepared_model_copy)
             top1, top5 = evaluate(quantized_model, data_loader_test)
             print('Epoch %d: Evaluation accuracy, %2.2f' % (nepoch, top1.avg))
 
-    torch.save(prepared_model.state_dict(), "./resnet50/checkpoint/last_checkpoint.pth")
+    torch.save(prepared_model_qat.state_dict(), "./resnet50/checkpoint/last_checkpoint.pth")
 
     # evaluate
-    quantized_model = convert_pt2e(prepared_model)
+    quantized_model = convert_pt2e(prepared_model_qat)
     # top1, top5 = evaluate(quantized_model, data_loader_test)
 
     # export
