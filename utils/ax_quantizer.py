@@ -261,17 +261,17 @@ def get_config(config: Dict[str, Any]):
     return is_symmetric, quant_config
 
 
-def load_global_config(global_config: Dict[str, str]):
+def load_global_config(global_config: Dict[str, str], is_qat: bool = True):
     is_symmetric, quant_config = get_config(global_config)
-    global_quantization_config = get_quantization_config(is_symmetric=is_symmetric, quant_config=quant_config)
+    global_quantization_config = get_quantization_config(is_symmetric=is_symmetric, is_qat=is_qat, quant_config=quant_config)
     return global_quantization_config
 
 
-def load_regional_config(regional_config: Dict[str, str]):
+def load_regional_config(regional_config: Dict[str, str], is_qat: bool = True):
     module_names = regional_config.get("module_names", None)
     module_type = regional_config["module_type"]
     is_symmetric, quant_config = get_config(regional_config["module_config"])
-    module_config = get_quantization_config(is_symmetric=is_symmetric, quant_config=quant_config)
+    module_config = get_quantization_config(is_symmetric=is_symmetric, is_qat=is_qat, quant_config=quant_config)
     regional_quantization_config = QuantizerRegionalConf(
         module_names=module_names,
         module_type=module_type,
@@ -280,20 +280,20 @@ def load_regional_config(regional_config: Dict[str, str]):
     return regional_quantization_config
 
 
-def load_config(config_file: str):
+def load_config(config_file: str, is_qat: bool = True):
 
     with open(config_file, 'r') as f:
         config = json.load(f)
     
     # global
     global_config = config["global_config"]
-    global_quantization_config = load_global_config(global_config)
+    global_quantization_config = load_global_config(global_config, is_qat=is_qat)
 
     # rregional
     regional_configs = config["regional_configs"]
     regional_quantization_configs = []
     for regional_config in regional_configs:
-        regional_quantization_config = load_regional_config(regional_config)
+        regional_quantization_config = load_regional_config(regional_config, is_qat=is_qat)
         regional_quantization_configs.append(regional_quantization_config)
 
     return global_quantization_config, regional_quantization_configs
