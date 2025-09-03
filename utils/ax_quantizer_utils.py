@@ -1393,37 +1393,29 @@ def _annotate_split(
                 users.append(user)
                 partition.append(user)
 
+        prev_node = split_node.args[0]
+        if prev_node.op == "placeholder":
+            # FIXME: 其实应该全局改，而不是在这遇到一个改一个
+            prev_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                output_qspec = get_output_act_qspec(quantization_config),
+                _annotated=True,
+            )
+        shared_qspec = SharedQuantizationSpec(prev_node)
+
         if is_global:
             if _is_annotated(partition):
                 continue
-
-            prev_node = split_node.args[0]
-            if prev_node.op == "placeholder":
-                shared_qspec = SharedQuantizationSpec((prev_node, split_node))
-                split_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                    input_qspec_map={
-                    split_node: get_input_act_qspec(quantization_config),
-                },
+            split_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                input_qspec_map={
+                split_node: shared_qspec,
+            },
+                _annotated=True,
+            )
+            for user in users:
+                user.meta["quantization_annotation"] = QuantizationAnnotation(
+                    output_qspec=shared_qspec,
                     _annotated=True,
                 )
-                for user in users:
-                    user.meta["quantization_annotation"] = QuantizationAnnotation(
-                        output_qspec=shared_qspec,
-                        _annotated=True,
-                    )
-            else:
-                shared_qspec = SharedQuantizationSpec(prev_node)
-                split_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                    input_qspec_map={
-                    split_node: shared_qspec,
-                },
-                    _annotated=True,
-                )
-                for user in users:
-                    user.meta["quantization_annotation"] = QuantizationAnnotation(
-                        output_qspec=shared_qspec,
-                        _annotated=True,
-                    )
         else:
             assert False
     return
@@ -1485,42 +1477,36 @@ def propagate_annotation(model: torch.fx.GraphModule, quantization_config: Optio
             continue
 
         if prev_node.op == "placeholder":
-            input_act_qspec = get_input_act_qspec(quantization_config)
-            shared_qspec = SharedQuantizationSpec((prev_node, n))
-
-            n.meta["quantization_annotation"] = QuantizationAnnotation(
-                input_qspec_map={
-                    prev_node: input_act_qspec,
-                },
-                output_qspec=shared_qspec,
+            # FIXME: 其实应该全局改，而不是在这遇到一个改一个
+            prev_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                output_qspec = get_output_act_qspec(quantization_config),
                 _annotated=True,
             )
 
-        else:
-            quantization_annotation = prev_node.meta.get("quantization_annotation", None)
-            if not quantization_annotation:
-                continue
+        quantization_annotation = prev_node.meta.get("quantization_annotation", None)
+        if not quantization_annotation:
+            continue
 
-            output_qspec = quantization_annotation.output_qspec
-            if not output_qspec:
-                continue
+        output_qspec = quantization_annotation.output_qspec
+        if not output_qspec:
+            continue
 
-            # make sure current node is not annotated
-            if (
-                "quantization_annotation" in n.meta
-                and n.meta["quantization_annotation"]._annotated
-            ):
-                continue
+        # make sure current node is not annotated
+        if (
+            "quantization_annotation" in n.meta
+            and n.meta["quantization_annotation"]._annotated
+        ):
+            continue
 
-            shared_qspec = SharedQuantizationSpec(prev_node)
-            # propagate the previous output_qspec to the current node
-            n.meta["quantization_annotation"] = QuantizationAnnotation(
-                input_qspec_map={
-                    prev_node: shared_qspec,
-                },
-                output_qspec=shared_qspec,
-                _annotated=True,
-            )
+        shared_qspec = SharedQuantizationSpec(prev_node)
+        # propagate the previous output_qspec to the current node
+        n.meta["quantization_annotation"] = QuantizationAnnotation(
+            input_qspec_map={
+                prev_node: shared_qspec,
+            },
+            output_qspec=shared_qspec,
+            _annotated=True,
+        )
 
 
 # TODO: make the list of ops customizable
