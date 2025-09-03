@@ -1394,6 +1394,12 @@ def _annotate_split(
                 partition.append(user)
 
         prev_node = split_node.args[0]
+        if prev_node.op == "placeholder":
+            # FIXME: 其实应该全局改，而不是在这遇到一个改一个
+            prev_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                output_qspec = get_output_act_qspec(quantization_config),
+                _annotated=True,
+            )
         shared_qspec = SharedQuantizationSpec(prev_node)
 
         if is_global:
@@ -1411,7 +1417,7 @@ def _annotate_split(
                     _annotated=True,
                 )
         else:
-            assert False, "just set the previous node of [split]"
+            assert False
     return
 
 
@@ -1447,6 +1453,9 @@ def _is_share_obs_or_fq_op(op: Callable) -> bool:
         torch.ops.aten.upsample_trilinear3d.vec,
         # gather
         torch.ops.aten.select.int,
+        # pixel shuffle/unshuffle
+        torch.ops.aten.pixel_shuffle.default,
+        torch.ops.aten.pixel_unshuffle.default,
         # others
         torch.ops.aten.relu.default,
         torch.ops.aten.hardtanh.default,
@@ -1458,7 +1467,7 @@ def _is_share_obs_or_fq_op(op: Callable) -> bool:
     ]
 
 
-def propagate_annotation(model: torch.fx.GraphModule) -> None:
+def propagate_annotation(model: torch.fx.GraphModule, quantization_config: Optional[QuantizationConfig]) -> None:
     for n in model.graph.nodes:
         if n.op != "call_function" or not _is_share_obs_or_fq_op(n.target):
             continue
@@ -1466,6 +1475,13 @@ def propagate_annotation(model: torch.fx.GraphModule) -> None:
         prev_node = n.args[0]
         if not isinstance(prev_node, Node):
             continue
+
+        if prev_node.op == "placeholder":
+            # FIXME: 其实应该全局改，而不是在这遇到一个改一个
+            prev_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                output_qspec = get_output_act_qspec(quantization_config),
+                _annotated=True,
+            )
 
         quantization_annotation = prev_node.meta.get("quantization_annotation", None)
         if not quantization_annotation:
