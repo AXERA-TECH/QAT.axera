@@ -433,7 +433,7 @@ class AXQuantizer(Quantizer):
         assert self.global_config is not None
         for op in self.OPS:
             OP_TO_ANNOTATOR[op](model, self.global_config, is_global=True)
-        propagate_annotation(model, self.global_config)
+        propagate_annotation(model)
 
         if self.regional_configs is not None:
             for regional_config in self.regional_configs:
