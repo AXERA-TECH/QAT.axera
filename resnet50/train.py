@@ -42,21 +42,15 @@ def train():
     dynamo_export(float_model, example_inputs, float_path)
 
     # quantizer
-    global_config, regional_configs = load_config("./resnet50/config.json")
-    quantizer = AXQuantizer()
-    quantizer.set_global(global_config)
-    quantizer.set_regional(regional_configs)
+    quantizer = AXQuantizer("./resnet50/config.json")
 
     exported_model = torch.export.export_for_training(float_model, example_inputs).module()
     prepared_model_qat = prepare_qat_pt2e(copy.deepcopy(exported_model), quantizer)
 
-    do_ptq = False
+    do_ptq = True
     if do_ptq:
         # ptq quantizer
-        global_config_ptq, regional_configs_ptq = load_config("./resnet50/config.json", is_qat=False)
-        quantizer_ptq = AXQuantizer()
-        quantizer_ptq.set_global(global_config_ptq)
-        quantizer_ptq.set_regional(regional_configs_ptq)
+        quantizer_ptq = AXQuantizer("./resnet50/config.json", is_qat=False)
 
         prepared_model_ptq = prepare_qat_pt2e(copy.deepcopy(exported_model), quantizer_ptq)
         torch.ao.quantization.move_exported_model_to_eval(prepared_model_ptq)
