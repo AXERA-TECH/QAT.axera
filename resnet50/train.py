@@ -25,7 +25,10 @@ from utils.train_utils import (
     onnx_simplify,
     evaluate,
 )
-from utils.quant_utils import simplify_and_fix_4bit_dtype
+from utils.quant_utils import (
+    simplify_and_fix_4bit_dtype,
+    load_ptq_calibration_to_qat,
+)
 import utils.quantized_decomposed_dequantize_per_channel
 
 
@@ -61,30 +64,14 @@ def train():
         # calibrate
         calibration_size = 100
         with torch.no_grad():
-            for i, (image, target) in enumerate(data_loader_test):
+            for i, (image, target) in enumerate(data_loader):
                 prepared_model_ptq(image.to('cuda'))
                 if i > calibration_size:
                     break
         # top1, top5 = evaluate(convert_pt2e(copy.deepcopy(prepared_model_ptq)), data_loader_test, total_size=1000)
 
         # cp scale zp to qat
-        assert len(prepared_model_qat.graph.nodes) == len(prepared_model_ptq.graph.nodes)
-        with torch.no_grad():
-            for node_ptq, node_qat in zip(prepared_model_ptq.graph.nodes, prepared_model_qat.graph.nodes):
-                if node_ptq.op == "call_module" and node_ptq.target.startswith("activation_post_process"):
-                    assert node_qat.op == "call_module" and node_qat.target.startswith("activation_post_process")
-                    assert node_ptq.target == node_qat.target
-
-                    module_ptq = prepared_model_ptq.get_submodule(node_ptq.target)
-                    module_qat = prepared_model_qat.get_submodule(node_qat.target)
-
-                    scale, zero_point = module_ptq.calculate_qparams()
-
-                    module_qat.scale = scale
-                    module_qat.zero_point = zero_point.type(torch.int32)
-                    module_qat.activation_post_process.min_val = module_ptq.min_val
-                    module_qat.activation_post_process.max_val = module_ptq.max_val
-
+        load_ptq_calibration_to_qat(prepared_model_ptq, prepared_model_qat)
         # top1, top5 = evaluate(convert_pt2e(copy.deepcopy(prepared_model_qat)), data_loader_test, total_size=1000)
 
 
