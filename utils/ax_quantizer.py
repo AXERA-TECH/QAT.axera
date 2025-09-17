@@ -370,17 +370,24 @@ class AXQuantizer(Quantizer):
         "split",
     ]
 
-    def __init__(self, annotate_bias: bool = True) -> None:
+    def __init__(self, config_file: str, is_qat: bool = True, annotate_bias: bool = True) -> None:
         super().__init__()
         self._annotate_bias = annotate_bias
 
-        # init global
-        self.global_config: Optional[QuantizationConfig] = None
-        # init regional
-        self.regional_configs: List[QuantizerRegionalConf] = []
-        self.init_regional()
+        # init config
+        self.init_global()
+        self.init_regional(is_qat)
+        
+        # set config
+        global_config, regional_configs = load_config(config_file=config_file, is_qat=is_qat)
+        self.set_global(global_config)
+        self.set_regional(regional_configs)
 
-    def init_regional(self):
+    def init_global(self):
+        self.global_config: Optional[QuantizationConfig] = None
+    
+    def init_regional(self, is_qat: bool):
+        self.regional_configs: List[QuantizerRegionalConf] = []
         # matlul
         regional_matmul = {
             "module_names": None,
@@ -394,7 +401,7 @@ class AXQuantizer(Quantizer):
                 },
             }
         }
-        regional_matmul_config = load_regional_config(regional_matmul)
+        regional_matmul_config = load_regional_config(regional_matmul, is_qat)
         self.regional_configs.append(regional_matmul_config)
         # gridsample
         regional_gridsample = {
@@ -409,7 +416,7 @@ class AXQuantizer(Quantizer):
                 },
             }
         }
-        regional_gridsample_config = load_regional_config(regional_gridsample)
+        regional_gridsample_config = load_regional_config(regional_gridsample, is_qat)
         self.regional_configs.append(regional_gridsample_config)
         return self
         
