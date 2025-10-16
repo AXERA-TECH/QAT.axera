@@ -31,10 +31,7 @@ def test():
     float_model = load_model("./resnet50/resnet50_pretrained_float.pth", "resnet50").to("cuda")
 
     # quantizer
-    global_config, regional_configs = load_config("./resnet50/config.json")
-    quantizer = AXQuantizer()
-    quantizer.set_global(global_config)
-    quantizer.set_regional(regional_configs)
+    quantizer = AXQuantizer("./resnet50/config.json")
 
     # quant model
     example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)

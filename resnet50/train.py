@@ -47,7 +47,7 @@ def train():
     exported_model = torch.export.export_for_training(float_model, example_inputs).module()
     prepared_model_qat = prepare_qat_pt2e(copy.deepcopy(exported_model), quantizer)
 
-    do_ptq = True
+    do_ptq = False
     if do_ptq:
         # ptq quantizer
         quantizer_ptq = AXQuantizer("./resnet50/config.json", is_qat=False)
@@ -102,6 +102,14 @@ def train():
     sim_path = "./resnet50/resnet50_qat_sim.onnx"
     # onnx_simplify(qat_path, sim_path)
     simplify_and_fix_4bit_dtype(qat_path, sim_path)  # export 4bit feature & 4bit weight onnx
+
+    # version converter
+    # import onnx
+    # from onnx import version_converter
+    # converted_path = "./resnet50/resnet50_qat_sim_21.onnx"
+    # onnx_model = onnx.load(sim_path)
+    # converted_model = version_converter.convert_version(onnx_model, target_version=21)
+    # onnx.save(converted_model, converted_path)
 
 
 if __name__ == "__main__":
