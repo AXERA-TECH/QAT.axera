@@ -348,15 +348,24 @@ def _annotate_conv(
     for the following names: "input", "conv", "weight", "bias", and "output".
     """
 
-    def get_pattern(conv_fn: Callable, has_bn: bool, has_relu: bool, relu_is_inplace: bool):
+    def get_pattern(conv_fn: Callable, has_bn: bool, activation: str):
         def _conv_bn(x, conv_weight, conv_bias, bn_weight=None, bn_bias=None, bn_rm=None, bn_rv=None):
             conv = conv_fn(x, conv_weight, conv_bias)
             if has_bn:
                 bn = F.batch_norm(conv, bn_rm, bn_rv, bn_weight, bn_bias, training=True)
             else:
                 bn = conv
-            if has_relu:
-                output = F.relu_(bn) if relu_is_inplace else F.relu(bn)
+            if activation is not None:
+                if activation == "relu":
+                    output = F.relu_(bn)
+                elif activation == "relu_inplace":
+                    output = F.relu_(bn)
+                elif activation == "relu6":
+                    output = F.hardtanh(bn, 0, 6, False)
+                elif activation == "relu6_inplace":
+                    output = F.hardtanh(bn, 0, 6, True)
+                else:
+                    assert False
             else:
                 output = bn
             return output, {
@@ -410,50 +419,38 @@ def _annotate_conv(
 
     matches: List[InternalMatch] = []
     combinations = [
-        (F.conv1d, False, _conv1d_example_inputs),  # conv_fn, has_bn, example_input
         (F.conv1d, True, _conv1d_bn_example_inputs),  # conv_fn, has_bn, example_input
-        (F.conv2d, False, _conv2d_example_inputs),  # type: ignore[list-item]
+        (F.conv1d, False, _conv1d_example_inputs),  # conv_fn, has_bn, example_input
         (F.conv2d, True, _conv2d_bn_example_inputs),  # type: ignore[list-item]
+        (F.conv2d, False, _conv2d_example_inputs),  # type: ignore[list-item]
+    ]
+    activations = [
+        "relu",
+        "relu_inplace",
+        "relu6",
+        "relu6_inplace",
+        None,
     ]
 
     # Add `is_cuda` and `relu_is_inplace` dimensions
     combinations = itertools.product(  # type: ignore[assignment]
         combinations,
         [True] if torch.cuda.is_available() else [False],  # is_cuda
-        [True, False],  # has_relu
-        [True, False],  # relu_is_inplace
+        activations,
     )
 
     # Match against all conv dimensions and cuda variants
-    for (conv_fn, has_bn, example_inputs), is_cuda, has_relu, relu_is_inplace in combinations:  # type: ignore[misc]
-        if not has_relu and relu_is_inplace:
-            continue
-        pattern = get_pattern(conv_fn, has_bn, has_relu, relu_is_inplace)  # type: ignore[has-type]
+    for (conv_fn, has_bn, example_inputs), is_cuda, activation in combinations:  # type: ignore[misc]
+        pattern = get_pattern(conv_fn, has_bn, activation)  # type: ignore[has-type]
         pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, using_training_ir=using_training_ir)  # type: ignore[has-type]
         pattern.graph.eliminate_dead_code()
         pattern.recompile()
         matcher = SubgraphMatcherWithNameNodeMap(pattern, ignore_literals=True)
         sub_matches = matcher.match(gm.graph)
         for sub_match in sub_matches:
-            if not has_relu:
-                output_node = sub_match.name_node_map["output"]
-                users = list(output_node.users.keys())
-                if len(users) == 1:
-                    next_node = users[0]
-                    if next_node.op == "call_function" and next_node.target in [
-                        torch.ops.aten.relu.default,
-                        torch.ops.aten.relu_.default,
-                    ]:
-                        continue
-                    if not has_bn:
-                        if next_node.op == "call_function" and next_node.target in [
-                            torch.ops.aten.batch_norm.default
-                        ]:
-                            continue
-            else:
-                if not has_bn:
-                    # hack: relu 的上一个算子被 match 到的也是 relu ？
-                    sub_match.name_node_map["conv"] = sub_match.name_node_map["output"].args[0]
+            if activation is not None and not has_bn:
+                # hack: relu 的上一个算子被 match 到的也是 relu ？
+                sub_match.name_node_map["conv"] = sub_match.name_node_map["output"].args[0]
             matches.append(sub_match)
 
     # Annotate nodes returned in the matches
@@ -485,57 +482,26 @@ def _annotate_conv(
             partition.append(bias_node)
 
         if is_global:
-            # if _is_annotated(partition):
-            #     continue
-            if not _is_annotated(partition[:1]) and _is_annotated(partition[1:]):
-                annotated_conv = None
-                for node in weight_node.users:
-                    if _is_annotated([node]):
-                        annotated_conv = node
-                        break
-                annotated_output = annotated_conv
-                while "quantization_annotation" not in annotated_output.meta \
-                    or annotated_output.meta["quantization_annotation"].output_qspec is None:
-                    annotated_output = list(annotated_output.users.keys())[0]
-
-                input_qspec_map = {}
-                input_qspec_map[input_node] = SharedQuantizationSpec((annotated_conv.args[0], annotated_conv))
-                input_qspec_map[weight_node] = SharedQuantizationSpec((weight_node, annotated_conv))
-                if bias_node is not None:
-                    input_qspec_map[bias_node] = SharedQuantizationSpec((bias_node, annotated_conv))
-                conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                    input_qspec_map=input_qspec_map,
-                    _annotated=True,
-                )
-                if output_node == conv_node:
-                    conv_node.meta["quantization_annotation"].output_qspec = SharedQuantizationSpec((annotated_conv, list(annotated_conv.users.keys())[0]))
-                else:
-                    output_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                        output_qspec=SharedQuantizationSpec((annotated_output, list(annotated_output.users.keys())[0])),  # type: ignore[arg-type]
-                        _annotated=True,
-                    )
-                _mark_nodes_as_annotated([conv_node])
-            elif not _is_annotated(partition):
-                # Annotate conv inputs and pattern output
-                input_qspec_map = {}
-                input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
-                input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
-                if bias_node is not None:
-                    input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
-                conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                    input_qspec_map=input_qspec_map,
-                    _annotated=True,
-                )
-                if output_node == conv_node:
-                    conv_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
-                else:
-                    output_node.meta["quantization_annotation"] = QuantizationAnnotation(
-                        output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
-                        _annotated=True,
-                    )
-                _mark_nodes_as_annotated(partition)
-            else:
+            if _is_annotated(partition):
                 continue
+            # Annotate conv inputs and pattern output
+            input_qspec_map = {}
+            input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
+            if bias_node is not None:
+                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
+            conv_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                input_qspec_map=input_qspec_map,
+                _annotated=True,
+            )
+            if output_node == conv_node:
+                conv_node.meta["quantization_annotation"].output_qspec = get_output_act_qspec(quantization_config)
+            else:
+                output_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                    output_qspec=get_output_act_qspec(quantization_config),  # type: ignore[arg-type]
+                    _annotated=True,
+                )
+            _mark_nodes_as_annotated(partition)
         else:
             if module_names is not None and conv_node.name not in module_names:
                 continue
@@ -562,15 +528,24 @@ def _annotate_convtranspose(
     module_names: List[str] = None,
     is_global: bool = True,
 ):
-    def get_pattern(conv_fn: Callable, has_bn: bool, has_relu: bool, relu_is_inplace: bool):
+    def get_pattern(conv_fn: Callable, has_bn: bool, activation: str):
         def _conv_bn(x, conv_weight, conv_bias, bn_weight=None, bn_bias=None, bn_rm=None, bn_rv=None):
             conv = conv_fn(x, conv_weight, conv_bias)
             if has_bn:
                 bn = F.batch_norm(conv, bn_rm, bn_rv, bn_weight, bn_bias, training=True)
             else:
                 bn = conv
-            if has_relu:
-                output = F.relu_(bn) if relu_is_inplace else F.relu(bn)
+            if activation is not None:
+                if activation == "relu":
+                    output = F.relu_(bn)
+                elif activation == "relu_inplace":
+                    output = F.relu_(bn)
+                elif activation == "relu6":
+                    output = F.hardtanh(bn, 0, 6, False)
+                elif activation == "relu6_inplace":
+                    output = F.hardtanh(bn, 0, 6, True)
+                else:
+                    assert False
             else:
                 output = bn
             return output, {
@@ -624,50 +599,38 @@ def _annotate_convtranspose(
 
     matches: List[InternalMatch] = []
     combinations = [
-        (F.conv_transpose1d, False, _conv1d_example_inputs),  # conv_fn, has_bn, example_input
         (F.conv_transpose1d, True, _conv1d_bn_example_inputs),  # conv_fn, has_bn, example_input
-        (F.conv_transpose2d, False, _conv2d_example_inputs),  # type: ignore[list-item]
+        (F.conv_transpose1d, False, _conv1d_example_inputs),  # conv_fn, has_bn, example_input
         (F.conv_transpose2d, True, _conv2d_bn_example_inputs),  # type: ignore[list-item]
+        (F.conv_transpose2d, False, _conv2d_example_inputs),  # type: ignore[list-item]
+    ]
+    activations = [
+        "relu",
+        "relu_inplace",
+        "relu6",
+        "relu6_inplace",
+        None,
     ]
 
     # Add `is_cuda` and `relu_is_inplace` dimensions
     combinations = itertools.product(  # type: ignore[assignment]
         combinations,
         [True, False] if torch.cuda.is_available() else [False],  # is_cuda
-        [True, False],  # has_relu
-        [True, False],  # relu_is_inplace
+        activations,
     )
 
     # Match against all conv dimensions and cuda variants
-    for (conv_fn, has_bn, example_inputs), is_cuda, has_relu, relu_is_inplace in combinations:  # type: ignore[misc]
-        if not has_relu and relu_is_inplace:
-            continue
-        pattern = get_pattern(conv_fn, has_bn, has_relu, relu_is_inplace)  # type: ignore[has-type]
+    for (conv_fn, has_bn, example_inputs), is_cuda, activation in combinations:  # type: ignore[misc]
+        pattern = get_pattern(conv_fn, has_bn, activation)  # type: ignore[has-type]
         pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, using_training_ir=using_training_ir)  # type: ignore[has-type]
         pattern.graph.eliminate_dead_code()
         pattern.recompile()
         matcher = SubgraphMatcherWithNameNodeMap(pattern, ignore_literals=True)
         sub_matches = matcher.match(gm.graph)
         for sub_match in sub_matches:
-            if not has_relu:
-                output_node = sub_match.name_node_map["output"]
-                users = list(output_node.users.keys())
-                if len(users) == 1:
-                    next_node = users[0]
-                    if next_node.op == "call_function" and next_node.target in [
-                        torch.ops.aten.relu.default,
-                        torch.ops.aten.relu_.default,
-                    ]:
-                        continue
-                    if not has_bn:
-                        if next_node.op == "call_function" and next_node.target in [
-                            torch.ops.aten.batch_norm.default
-                        ]:
-                            continue
-            else:
-                if not has_bn:
-                    # hack: relu 的上一个算子被 match 到的也是 relu ？
-                    sub_match.name_node_map["conv"] = sub_match.name_node_map["output"].args[0]
+            if activation is not None and not has_bn:
+                # hack: relu 的上一个算子被 match 到的也是 relu ？
+                sub_match.name_node_map["conv"] = sub_match.name_node_map["output"].args[0]
             matches.append(sub_match)
 
     # Annotate nodes returned in the matches
@@ -796,7 +759,7 @@ def _annotate_adaptive_avg_pool2d(
 ) -> Optional[List[List[Node]]]:
     """Always annotate adaptive_avg_pool2d op"""
     module_partitions = get_source_partitions(
-        gm.graph, [torch.nn.AdaptiveAvgPool2d, F.adaptive_avg_pool2d], None
+        gm.graph, [torch.nn.AvgPool2d, torch.nn.AdaptiveAvgPool2d, F.adaptive_avg_pool2d], None
     )
     partitions = list(itertools.chain.from_iterable(module_partitions.values()))
 
@@ -804,9 +767,12 @@ def _annotate_adaptive_avg_pool2d(
         pool_node = partition.output_nodes[0]
         if (
             pool_node.op != "call_function"
-            or pool_node.target != torch.ops.aten.adaptive_avg_pool2d.default
+            or pool_node.target not in [
+                torch.ops.aten.avg_pool2d.default,
+                torch.ops.aten.adaptive_avg_pool2d.default,
+            ]
         ):
-            raise ValueError(f"{pool_node} is not an aten adaptive_avg_pool2d operator")
+            raise ValueError(f"{pool_node} is not an aten avg_pool2d operator")
 
         input_node = pool_node.args[0]
         assert isinstance(input_node, Node)
@@ -1075,16 +1041,78 @@ def _annotate_gridsample(
     is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
 
-    aten_ops = [
+    # aten_ops = [
+    #     torch.ops.aten.grid_sampler.default,
+    # ]
+    # _do_annotate_dyadic(
+    #     gm,
+    #     quantization_config,
+    #     module_names,
+    #     is_global,
+    #     aten_ops
+    # )
+
+    for node in gm.graph.nodes:
+        if node.op != "call_function" or node.target not in [
         torch.ops.aten.grid_sampler.default,
-    ]
-    _do_annotate_dyadic(
-        gm,
-        quantization_config,
-        module_names,
-        is_global,
-        aten_ops
-    )
+    ]:
+            continue
+        dyadic_node = node
+        output_node = dyadic_node
+        partition = [dyadic_node]
+
+        input_node0 = dyadic_node.args[0]
+        input_node1 = dyadic_node.args[1]
+
+        if len(dyadic_node.users) == 1 and list(dyadic_node.users.keys())[0].target in [
+            torch.ops.aten.relu.default,
+            torch.ops.aten.relu_.default,
+        ]:
+            relu_node = list(dyadic_node.users.keys())[0]
+            output_node = relu_node
+            partition.append(relu_node)
+
+        
+        input_act_qspec = get_input_act_qspec(quantization_config)
+        output_act_qspec = get_output_act_qspec(quantization_config)
+        input_qspec_map = {}
+        if isinstance(input_node0, Node):
+            if _is_input_large_scalar(input_node0, gm):
+                continue
+            if _is_input_non_float_tensor(input_node0):
+                continue
+            input_qspec_map[input_node0] = input_act_qspec
+        if isinstance(input_node1, Node):
+            if _is_input_large_scalar(input_node1, gm):
+                continue
+            if _is_input_non_float_tensor(input_node1):
+                continue
+            input_qspec_map[input_node1] = None
+
+        if is_global:
+            if _is_annotated(partition):
+                continue
+            dyadic_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                input_qspec_map=input_qspec_map,
+                _annotated=True,
+            )
+            if output_node == dyadic_node:
+                dyadic_node.meta["quantization_annotation"].output_qspec=output_act_qspec
+            else:
+                output_node.meta["quantization_annotation"] = QuantizationAnnotation(
+                    output_qspec=output_act_qspec,
+                    _annotated=True,
+                )
+        else:
+            if not _is_annotated(partition):
+                assert False
+            if module_names is not None and dyadic_node.name not in module_names:
+                continue
+
+            dyadic_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
+            _update_last_node_output_qspec(input_node0, dyadic_node, get_input_act_qspec(quantization_config))
+            _update_last_node_output_qspec(input_node1, dyadic_node, get_input_act_qspec(quantization_config))
+    return
 
 
 def _do_annotate_activate(
@@ -1165,6 +1193,48 @@ def _annotate_gelu(
     aten_ops = [
         torch.ops.aten.gelu.default,
         torch.ops.aten.gelu_.default,
+    ]
+    _do_annotate_activate(
+        gm,
+        quantization_config,
+        module_names,
+        is_global,
+        aten_ops
+    )
+
+
+@register_annotator("sigmoid")
+def _annotate_sigmoid(
+    gm: torch.fx.GraphModule,
+    quantization_config: Optional[QuantizationConfig],
+    module_names: List[str] = None,
+    is_global: bool = True,
+) -> Optional[List[List[Node]]]:
+
+    aten_ops = [
+        torch.ops.aten.sigmoid.default,
+        torch.ops.aten.sigmoid_.default,
+    ]
+    _do_annotate_activate(
+        gm,
+        quantization_config,
+        module_names,
+        is_global,
+        aten_ops
+    )
+
+
+@register_annotator("leakyrelu")
+def _annotate_leakyrelu(
+    gm: torch.fx.GraphModule,
+    quantization_config: Optional[QuantizationConfig],
+    module_names: List[str] = None,
+    is_global: bool = True,
+) -> Optional[List[List[Node]]]:
+
+    aten_ops = [
+        torch.ops.aten.leaky_relu.default,
+        torch.ops.aten.leaky_relu_.default,
     ]
     _do_annotate_activate(
         gm,
@@ -1457,11 +1527,14 @@ def _is_share_obs_or_fq_op(op: Callable) -> bool:
         torch.ops.aten.pixel_shuffle.default,
         torch.ops.aten.pixel_unshuffle.default,
         # others
-        torch.ops.aten.relu.default,
-        torch.ops.aten.hardtanh.default,
-        torch.ops.aten.hardtanh_.default,
-        torch.ops.aten.mean.default,
-        torch.ops.aten.mean.dim,
+        torch.ops.aten.dropout.default,
+        torch.ops.aten.expand_as.default,
+        # torch.ops.aten.relu.default,
+        # torch.ops.aten.hardtanh.default,
+        # torch.ops.aten.hardtanh_.default,
+        # torch.ops.aten.mean.default,
+        # torch.ops.aten.mean.dim,
+        torch.ops.aten.amax.default,
         torch.ops.aten.slice.Tensor,
         torch.ops.aten.slice_copy.Tensor,
     ]

@@ -358,6 +358,7 @@ class AXQuantizer(Quantizer):
         "conv",  # conv, conv_relu, conv_bn, conv_bn_relu
         "convtranspose",  # conv_transpose_relu, conv_transpose_bn, conv_transpose_bn_relu
         "layernorm",
+        "leakyrelu",
         "linear",  # linear, linaer_relu
         "matmul",
         "mul",  # mul, mul_relu
@@ -365,6 +366,7 @@ class AXQuantizer(Quantizer):
         "glu",
         "gridsample",
         "groupnorm",
+        "sigmoid",
         "silu",
         "softmax",
         "split",
