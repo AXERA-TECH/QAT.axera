@@ -12,8 +12,8 @@ from torch._subclasses import FakeTensor
 from torch.ao.quantization.fx.utils import get_new_attr_name_with_prefix
 from torch.ao.quantization.pt2e.export_utils import _WrapperModule
 from torch.ao.quantization.pt2e.utils import (
-    _conv1d_bn_example_inputs,
-    _conv2d_bn_example_inputs,
+    # _conv1d_bn_example_inputs,
+    # _conv2d_bn_example_inputs,
     _get_aten_graph_module_for_pattern,
     _is_conv_node,
     _is_conv_transpose_node,
@@ -508,14 +508,11 @@ def _annotate_conv(
             if not _is_annotated(partition):
                 assert False
             # Annotate node inputs and last node output
-            old_input_qspec_map = conv_node.meta["quantization_annotation"].input_qspec_map
             input_qspec_map = {}
             input_qspec_map[input_node] = get_input_act_qspec(quantization_config)
-            input_qspec_map[weight_node] = old_input_qspec_map[weight_node] \
-                if isinstance(old_input_qspec_map[weight_node], SharedQuantizationSpec) else get_weight_qspec(quantization_config)
+            input_qspec_map[weight_node] = get_weight_qspec(quantization_config)
             if bias_node is not None:
-                input_qspec_map[bias_node] = old_input_qspec_map[bias_node] \
-                    if isinstance(old_input_qspec_map[bias_node], SharedQuantizationSpec) else get_bias_qspec(quantization_config)
+                input_qspec_map[bias_node] = get_bias_qspec(quantization_config)
             conv_node.meta["quantization_annotation"].input_qspec_map = input_qspec_map
             _update_last_node_output_qspec(input_node, conv_node, get_input_act_qspec(quantization_config))
     return
@@ -980,6 +977,27 @@ def _annotate_add(
     aten_ops = [
         torch.ops.aten.add.Tensor,
         torch.ops.aten.add_.Tensor,
+    ]
+    _do_annotate_dyadic(
+        gm,
+        quantization_config,
+        module_names,
+        is_global,
+        aten_ops
+    )
+
+
+@register_annotator("sub")
+def _annotate_sub(
+    gm: torch.fx.GraphModule,
+    quantization_config: Optional[QuantizationConfig],
+    module_names: List[str] = None,
+    is_global: bool = True,
+) -> Optional[List[List[Node]]]:
+
+    aten_ops = [
+        torch.ops.aten.sub.Tensor,
+        torch.ops.aten.sub_.Tensor,
     ]
     _do_annotate_dyadic(
         gm,
@@ -1464,12 +1482,31 @@ def _annotate_split(
                 partition.append(user)
 
         prev_node = split_node.args[0]
+        if not isinstance(prev_node, Node):
+            continue
+
         if prev_node.op == "placeholder":
             # FIXME: 其实应该全局改，而不是在这遇到一个改一个
             prev_node.meta["quantization_annotation"] = QuantizationAnnotation(
                 output_qspec = get_output_act_qspec(quantization_config),
                 _annotated=True,
             )
+
+        quantization_annotation = prev_node.meta.get("quantization_annotation", None)
+        if not quantization_annotation:
+            continue
+
+        output_qspec = quantization_annotation.output_qspec
+        if not output_qspec:
+            continue
+
+        # make sure current node is not annotated
+        if (
+            "quantization_annotation" in split_node.meta
+            and split_node.meta["quantization_annotation"]._annotated
+        ):
+            continue
+
         shared_qspec = SharedQuantizationSpec(prev_node)
 
         if is_global:
@@ -1477,7 +1514,7 @@ def _annotate_split(
                 continue
             split_node.meta["quantization_annotation"] = QuantizationAnnotation(
                 input_qspec_map={
-                split_node: shared_qspec,
+                prev_node: shared_qspec,
             },
                 _annotated=True,
             )
