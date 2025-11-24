@@ -369,6 +369,7 @@ class AXQuantizer(Quantizer):
         "sigmoid",
         "silu",
         "softmax",
+        "sub",
         "split",
     ]
 
