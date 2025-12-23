@@ -357,7 +357,7 @@ def _annotate_conv(
                 bn = conv
             if activation is not None:
                 if activation == "relu":
-                    output = F.relu_(bn)
+                    output = F.relu(bn)
                 elif activation == "relu_inplace":
                     output = F.relu_(bn)
                 elif activation == "relu6":
@@ -534,7 +534,7 @@ def _annotate_convtranspose(
                 bn = conv
             if activation is not None:
                 if activation == "relu":
-                    output = F.relu_(bn)
+                    output = F.relu(bn)
                 elif activation == "relu_inplace":
                     output = F.relu_(bn)
                 elif activation == "relu6":
