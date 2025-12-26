@@ -260,7 +260,20 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, ntrain_bat
 
 
 def dynamo_export(model, inputs, onnx_path):
-    onnx_program = torch.onnx.export(model, inputs, output_names=['output'], dynamo=True, opset_version=21)
+    # Generate input names based on number of inputs
+    if isinstance(inputs, tuple):
+        input_names = [f"input_{i}" for i in range(len(inputs))]
+    else:
+        input_names = ["input"]
+    
+    onnx_program = torch.onnx.export(
+        model, 
+        inputs, 
+        input_names=input_names,
+        output_names=['output'], 
+        dynamo=True, 
+        opset_version=21
+    )
     onnx_program.optimize()
     onnx_program.save(onnx_path)
     print(f"save onnx model to [{onnx_path}] Successfully!")
