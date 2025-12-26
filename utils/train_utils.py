@@ -261,7 +261,8 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, ntrain_bat
 
 def dynamo_export(model, inputs, onnx_path):
     # Generate input names based on number of inputs
-    if isinstance(inputs, tuple):
+    # Handle both single tensors and sequences (tuple/list) of tensors
+    if isinstance(inputs, (tuple, list)):
         input_names = [f"input_{i}" for i in range(len(inputs))]
     else:
         input_names = ["input"]
