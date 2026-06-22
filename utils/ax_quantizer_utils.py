@@ -1563,6 +1563,11 @@ def _is_share_obs_or_fq_op(op: Callable) -> bool:
         # pixel shuffle/unshuffle
         torch.ops.aten.pixel_shuffle.default,
         torch.ops.aten.pixel_unshuffle.default,
+        # clip
+        torch.ops.aten.clamp.default,
+        torch.ops.aten.clamp.Tensor,
+        torch.ops.aten.clamp_.default,
+        torch.ops.aten.clamp_.Tensor,
         # others
         torch.ops.aten.dropout.default,
         torch.ops.aten.expand_as.default,
