@@ -1700,3 +1700,4 @@ def annotate_bias(model: torch.fx.GraphModule):
                 ch_axis=0,
             )
             node.meta["quantization_annotation"].input_qspec_map[bias] = bias_qspec
+
