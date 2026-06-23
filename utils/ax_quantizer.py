@@ -399,7 +399,7 @@ class AXQuantizer(Quantizer):
                 "is_symmetric": True,
                 "input": {
                     "dtype": "S16",
-                    "qmin": -32767,
+                    "qmin": -32768,
                     "qmax": 32767
                 },
             }
@@ -414,7 +414,7 @@ class AXQuantizer(Quantizer):
                 "is_symmetric": True,
                 "input": {
                     "dtype": "S16",
-                    "qmin": -32767,
+                    "qmin": -32768,
                     "qmax": 32767
                 },
             }

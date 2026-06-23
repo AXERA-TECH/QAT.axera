@@ -15,7 +15,7 @@ https://github.com/AXERA-TECH/QAT.axera/tree/feat/support_mixed_precision
         },
         "weight": {
             "dtype": "S8",
-            "qmin": -127,
+            "qmin": -128,
             "qmax": 127
         }
     },
@@ -32,7 +32,7 @@ https://github.com/AXERA-TECH/QAT.axera/tree/feat/support_mixed_precision
                 },
                 "weight": {
                     "dtype": "S8",
-                    "qmin": -127,
+                    "qmin": -128,
                     "qmax": 127
                 }
             }

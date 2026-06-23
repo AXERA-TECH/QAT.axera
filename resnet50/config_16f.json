@@ -8,7 +8,7 @@
         },
         "weight": {
             "dtype": "S8",
-            "qmin": -127,
+            "qmin": -128,
             "qmax": 127
         }
     },
@@ -25,7 +25,7 @@
                 },
                 "weight": {
                     "dtype": "S8",
-                    "qmin": -127,
+                    "qmin": -128,
                     "qmax": 127
                 }
             }
