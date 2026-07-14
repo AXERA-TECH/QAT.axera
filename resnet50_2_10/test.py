@@ -1,61 +1,28 @@
-"""resnet50 QAT 评测 —— torch2.6 / torch2.10 双环境等价脚本(P2)。
+"""resnet50 QAT 评测 —— axquant 统一 API 版(torch 2.6 / 2.10 同一份代码)。
 
 加载 train.py 产出的 checkpoint,convert 后分别用 torch 与 onnxruntime 评测,
 用于确认「训练态 QAT 模型」与「导出 ONNX」数值/精度一致。
-数据选项与 train.py 相同(fake / cifar10)。
 """
 import argparse
 
 import torch
 import onnxruntime as ort
 
-_ver = tuple(int(v) for v in torch.__version__.split("+")[0].split(".")[:2])
-IS_210 = _ver >= (2, 10)
-TAG = "2_10" if IS_210 else "2_6"
+from axquant import (
+    IS_TORCH_210,
+    AXQuantizer,
+    capture,
+    prepare_qat_pt2e,
+    convert_pt2e,
+    load_model,
+    evaluate,
+    evaluate_np,
+    imagenet_data_loaders,
+    cifar10_data_loaders,
+)
 
-if IS_210:
-    from torchao.quantization.pt2e.quantize_pt2e import (
-        prepare_qat_pt2e,
-        convert_pt2e,
-    )
-    from utils_2_10.ax_quantizer import AXQuantizer
-    from utils_2_10.train_utils import (
-        load_model,
-        evaluate,
-        evaluate_np,
-        imagenet_data_loaders,
-        cifar10_data_loaders,
-    )
-    import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401
-else:
-    from torch.ao.quantization.quantize_pt2e import (
-        prepare_qat_pt2e,
-        convert_pt2e,
-    )
-    from utils.ax_quantizer import AXQuantizer
-    from utils.train_utils import (
-        load_model,
-        evaluate,
-        evaluate_np,
-        imagenet_data_loaders,
-        cifar10_data_loaders,
-    )
-    import utils.quantized_decomposed_dequantize_per_channel  # noqa: F401
-
-
+TAG = "2_10" if IS_TORCH_210 else "2_6"  # 仅用于产物文件名
 OUT_DIR = "./resnet50_2_10"
-
-
-def capture(model: torch.nn.Module, example_inputs):
-    # batch 维声明动态 + 0/1 特化规避(捕获样例 batch>=2),原因见 train.py capture()
-    if IS_210:
-        x = example_inputs[0]
-        capture_inputs = (torch.cat([x, x], dim=0) if x.shape[0] == 1 else x,)
-        # 上界须显式(guard 推出 batch < 2^31/单样本元素数),见 train.py
-        batch = torch.export.Dim("batch", min=1, max=1024)
-        return torch.export.export(
-            model, capture_inputs, dynamic_shapes=({0: batch},)).module()
-    return torch.export.export_for_training(model, example_inputs).module()
 
 
 def test(args):
@@ -78,15 +45,16 @@ def test(args):
     # quantizer
     quantizer = AXQuantizer(args.config)
 
-    # quant model
+    # quant model(capture 与训练一致 → state_dict 键对齐)
     example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    exported_model = capture(float_model.train(), example_inputs)
+    exported_model = capture(float_model.train(), example_inputs, dynamic_batch=True)
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
-    prepared_model.load_state_dict(torch.load(f"{OUT_DIR}/checkpoint/last_checkpoint_{TAG}.pth"))
+    prepared_model.load_state_dict(
+        torch.load(f"{OUT_DIR}/checkpoint/last_checkpoint_{TAG}.pth", weights_only=True))
     quantized_model = convert_pt2e(prepared_model)
 
-    # onnx session
+    # onnx session(输入名动态获取)
     sess = ort.InferenceSession(f"{OUT_DIR}/resnet50_qat_{TAG}.onnx",
                                 providers=["CPUExecutionProvider"])
 
@@ -104,5 +72,5 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-size", type=int, default=20, help="验证 batch 数,0=全量")
     args = parser.parse_args()
-    print(f"[env] torch {torch.__version__} → {TAG} 实现 | data={args.data}")
+    print(f"[env] torch {torch.__version__} → {TAG} | data={args.data}")
     test(args)

@@ -1,8 +1,5 @@
-"""交叉实验:同一份 QAT checkpoint 在 torch2.6 与 torch2.10 各自 convert+导出。
-
-目的:排除训练随机性,单独验证「observer 状态 → 量化参数 → 导出 QDQ」这段
-计算在两个体系(torch.ao vs torchao)下是否等价。若等价,两侧导出的
-scale/zero_point 应逐位置接近(浮点精度级)。
+"""交叉实验 —— axquant 统一 API 版:同一份 QAT checkpoint 在两个环境各自
+convert+导出,验证「observer 状态 → 量化参数 → 导出 QDQ」计算跨体系等价。
 
 用法(两个环境各跑一次,--checkpoint 指向同一个文件):
   cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. \
@@ -14,35 +11,19 @@ import argparse
 
 import torch
 
-_ver = tuple(int(v) for v in torch.__version__.split("+")[0].split(".")[:2])
-IS_210 = _ver >= (2, 10)
-TAG = "2_10" if IS_210 else "2_6"
+from axquant import (
+    IS_TORCH_210,
+    AXQuantizer,
+    capture,
+    prepare_qat_pt2e,
+    convert_pt2e,
+    load_model,
+    dynamo_export,
+    simplify_and_fix_4bit_dtype,
+)
 
-if IS_210:
-    from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
-    from utils_2_10.ax_quantizer import AXQuantizer
-    from utils_2_10.train_utils import load_model, dynamo_export
-    from utils_2_10.quant_utils import simplify_and_fix_4bit_dtype
-    import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401
-else:
-    from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
-    from utils.ax_quantizer import AXQuantizer
-    from utils.train_utils import load_model, dynamo_export
-    from utils.quant_utils import simplify_and_fix_4bit_dtype
-    import utils.quantized_decomposed_dequantize_per_channel  # noqa: F401
-
+TAG = "2_10" if IS_TORCH_210 else "2_6"  # 仅用于产物文件名
 OUT_DIR = "./resnet50_2_10"
-
-
-def capture(model: torch.nn.Module, example_inputs):
-    # 与 train.py 相同:2.10 动态 batch + 0/1 特化规避 + 显式上界
-    if IS_210:
-        x = example_inputs[0]
-        capture_inputs = (torch.cat([x, x], dim=0) if x.shape[0] == 1 else x,)
-        batch = torch.export.Dim("batch", min=1, max=1024)
-        return torch.export.export(
-            model, capture_inputs, dynamic_shapes=({0: batch},)).module()
-    return torch.export.export_for_training(model, example_inputs).module()
 
 
 def main(args):
@@ -55,7 +36,7 @@ def main(args):
 
     quantizer = AXQuantizer(args.config)
     example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    exported_model = capture(float_model.train(), example_inputs)
+    exported_model = capture(float_model.train(), example_inputs, dynamic_batch=True)
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
     # strict 加载:键不匹配会直接报错,本身就是跨体系兼容性的检验点
