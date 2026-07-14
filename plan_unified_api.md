@@ -1,4 +1,4 @@
-# 统一量化 API 规划（plan_unified_api.md，v1.1 — 决策已定稿 2026-07-10）
+# 统一量化 API 规划（plan_unified_api.md，v2 — 采纳方案 B' 合并实现，2026-07-14）
 
 > 分支：`feat/unified-quant-api`（基于 torch2.10 分支 00debca）
 > 前置：P0–P4 迁移已完成且等价性四层闭环（见 README_2_10.md），本规划是其上的体验重构。
@@ -89,3 +89,34 @@ axquant/                    # 包名已定(D1)
 - `capture(dynamic_batch=...)` 的默认值取 False（与 2.6 行为一致），训练场景
   显式开——避免隐式行为差异；
 - 回归成本集中在 R2（矩阵 + 冒烟，约半小时机器时间）。
+
+## 八、v2 修订：采纳方案 B'（合并实现，2026-07-14 与用户确认）
+
+**变更**：axquant 不再是"路由到两套 utils 的壳"（方案 A），而是**唯一的合并
+实现**——版本分支下沉到实现内部的三个最小点位，其余全部单份代码：
+
+1. `_compat.py`：唯一的条件 import 块（torch>=2.10 → torchao，否则 torch.ao；
+   符号改名在此对齐，如 WrapperModule/annotate_*_qspec_map/DerivedObserver*；
+   另提供 `get_aten_graph_module_for_pattern()` 包装吃掉 2.6 的
+   using_training_ir 参数差异）；
+2. `train_utils.dynamo_export` 内部 if（2.6：export+optimize()；
+   2.10：optimize=False + onnx.inliner 内联 + 域清理）；
+3. `capture()` 内部 if（2.6：export_for_training；2.10：export，
+   dynamic_batch=True 时自动处理 0/1 特化与显式上界）。
+
+依据（移植史盘点）：两套 utils 的差异 ≈95% 是 import；4 个重写注解器
+（aten 直匹配）、hack（按 num_batches_tracked）、metadata 双格式解析、
+ir 回写/CastLike/内联（2.6 下天然 no-op）均为**双版本通用**。
+
+**终局**：R3 收敛后 `utils_2_10/` 整个删除；`utils/`（2.6 原件）保留但
+退役为上游对照物，不再被任何 demo 引用。
+
+**R1 重定义**：`_compat` + 核心文件（ax_quantizer / ax_quantizer_utils /
+train_utils / quant_utils / extract / 自定义 per-channel 映射,单份合并版）
++ `capture.py` + `__init__.py`（公共 API 出口,包 import 即自动完成
+per-channel 映射注册）;验收 = 统一版 minimum demo **同一份文件**在
+torch2.6 与 torch2.10 两个环境跑通,产物过 checker 且与既有 2.6 金标准 /
+_2_10 产物结构一致。
+
+**新增约束**：merged 实现的任何改动,双环境回归为必选项(安全网 =
+env_check 矩阵 + 等价性 harness)。
