@@ -626,3 +626,31 @@ graph():
 ### 几点说明：
 - module_names 为可选配置，module_type 为必须配置，为了支持 yolov5s，目前只支持了"add", "conv", "concat", "silu", "avgpool", "linear"算子的量化
 - 量化配置实际上是以 pattern 为单位，而不是算子，比如上面 U16 量化的 conv 其实是 conv_bn_relu ，作为一组 pattern，暂时 module_type 只需要配置 pattern 中的核心计算算子，以后会添加 module_type 配置的详细说明。
+
+---
+
+## torch 2.10 补充(2026-07-10,详见 plan_torch210.md / env.md)
+
+上文工作流在 torch 2.10 下的变化与不变:
+
+**变**:图捕获入口 `export_for_training` 已废弃,改用 `torch.export.export`
+(训练场景还需动态 batch,见 resnet50_2_10/train.py 的 capture()):
+
+```
+exported_model = torch.export.export(float_model.train(), example_inputs).module()
+print(exported_model.graph)
+```
+
+**不变**:捕获图(prepare 之前)的节点命名与 2.6 完全一致(conv2d_1、
+add__5 等已实测逐一命中),**既有 config 里的 module_names 不需要改**;
+"打印 graph 找 module_names" 的方法照旧。
+
+⚠️ **务必在 prepare 之前的捕获图上找名字**:convert_pt2e 的 conv-bn 折叠
+会把 conv 节点重建并整体改名(2.10 实测变为 conv2d_106 起的新编号),
+convert 之后的图与配置里的 module_names 对不上属正常现象,不要以它为准。
+如需在 convert 后的图上定位结构(例如切子图),用拓扑序位置索引,参考
+multi_stage/multi_stage_demo_2_10.py 的 find_stage_cuts()。
+
+regional 混合精度(U16/U4/FP32 区域)在 2.10 管线(utils_2_10)下已全配置
+复测通过;历史 2.6 管线产出的"混合 4bit"模型存在 zp 共享污染 bug,不要作为
+金标准对照(详见 env_check/README.md)。

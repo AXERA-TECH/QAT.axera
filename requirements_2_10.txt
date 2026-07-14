@@ -1,0 +1,28 @@
+# torch 2.10 环境依赖(双轨:requirements.txt 保留为 torch 2.6 基线)
+# 版本选型依据与验证记录见 env.md;结构检查工具见 env_check/README.md
+# ⚠️ 内网机器直连 PyPI 会挂死,安装需走清华源:
+#   pip install -r requirements_2_10.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# (torch 三件套 + torchao 的 +cu126 构建来自 pytorch 官方渠道,
+#  离线环境按 env.md 的说明预装)
+
+# --- PyTorch 栈(cu126) ---
+torch==2.10.0+cu126
+torchvision==0.25.0+cu126
+torchaudio==2.10.0+cu126
+# torch 2.10 中 torch.ao 的 PT2E QAT 已坏,必须走 torchao(见 plan_torch210.md 改动 1)
+torchao==0.16.0+cu126
+
+# --- ONNX 生态 ---
+# onnx 与 torch 2.10 官方 CI pin 一致;onnxscript 0.6.2 修复 optimize
+# 折叠权重 DQ 链问题(本项目提报);onnx-ir 约束 <0.1.16
+onnx==1.19.1
+onnxscript==0.6.2
+onnx-ir==0.1.15
+onnxruntime==1.23.2
+onnx-graphsurgeon==0.6.1
+onnxslim==0.1.94
+
+# --- 其他 ---
+tqdm==4.68.4
+pyyaml==6.0.3
+ipython==9.15.0

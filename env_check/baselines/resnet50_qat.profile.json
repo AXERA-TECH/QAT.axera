@@ -1,0 +1,38 @@
+{
+  "opset": {
+    "ai.onnx": 21
+  },
+  "ir_version": 10,
+  "op_histogram": {
+    "DequantizeLinear": 128,
+    "QuantizeLinear": 74,
+    "Conv": 53,
+    "Relu": 49,
+    "MaxPool": 1,
+    "Add": 16,
+    "ReduceMean": 1,
+    "Reshape": 1,
+    "Gemm": 1
+  },
+  "num_inputs": 1,
+  "num_outputs": 1,
+  "weight_dq": {
+    "S8|per-channel|Conv": 53,
+    "S8|per-channel|Gemm": 1
+  },
+  "act_q": {
+    "U8|<output>": 1,
+    "U8|Add": 20,
+    "U8|Add,Conv": 12,
+    "U8|Conv": 37,
+    "U8|Gemm": 1,
+    "U8|MaxPool": 1,
+    "U8|ReduceMean": 1,
+    "U8|Reshape": 1
+  },
+  "counts": {
+    "QuantizeLinear": 74,
+    "DequantizeLinear(act)": 74,
+    "DequantizeLinear(weight)": 54
+  }
+}
