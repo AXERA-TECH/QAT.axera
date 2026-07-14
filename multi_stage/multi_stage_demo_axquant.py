@@ -1,7 +1,7 @@
-"""torch 2.10 版多段推理 demo(与 multi_stage_demo.py 对应,差异见注释)。
+"""axquant 统一 API 版多段推理 demo(与 multi_stage_demo.py 对应,torch 2.6/2.10 同一份代码)。
 
 相对 2.6 版的改动:
-  1. torchao PT2E + utils_2_10(双轨惯例,原件不动);
+  1. axquant 统一 API(内部自动路由 torch.ao/torchao)(双轨惯例,原件不动);
   2. 图捕获:export_for_training → torch.export.export + 动态 batch
      (评测 batch=32,静态 guard 会炸,同 resnet50_2_10/train.py);
   3. 数据:机器上没有 ImageNet 训练集 → CIFAR-10(10 类 fc,种子与
@@ -25,33 +25,20 @@
 """
 import torch
 
-from torchao.quantization.pt2e.quantize_pt2e import (
+from axquant import (
     prepare_qat_pt2e,
     convert_pt2e,
-)
-from torchao.quantization.pt2e import move_exported_model_to_eval
-from utils_2_10.ax_quantizer import (
-    load_config,
+    move_exported_model_to_eval,
+    capture,
     AXQuantizer,
-)
-from utils_2_10.train_utils import (
+    load_config,
     load_model,
     cifar10_data_loaders,
     evaluate,
+    extract_subgraph,
 )
-from utils_2_10.extract import extract_subgraph
-import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401
 
 SEED = 42
-
-
-def capture(model, example_inputs):
-    # 动态 batch 捕获,原因见 resnet50_2_10/train.py capture()
-    x = example_inputs[0]
-    capture_inputs = (torch.cat([x, x], dim=0) if x.shape[0] == 1 else x,)
-    batch = torch.export.Dim("batch", min=1, max=1024)
-    return torch.export.export(
-        model, capture_inputs, dynamic_shapes=({0: batch},)).module()
 
 
 def find_stage_cuts(gm, boundary_conv_idx=(11, 43)):
@@ -102,7 +89,7 @@ if __name__ == "__main__":
     model.fc = torch.nn.Linear(model.fc.in_features, 10).to("cuda")
 
     # quantized model
-    exported_model = capture(model.train(), example_inputs)
+    exported_model = capture(model.train(), example_inputs, dynamic_batch=True)
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
     prepared_model.load_state_dict(

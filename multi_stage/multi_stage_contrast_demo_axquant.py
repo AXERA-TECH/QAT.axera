@@ -1,4 +1,4 @@
-"""torch 2.10 版:切子图方法与多个 forward 分别独立推理方法的比较。
+"""axquant 统一 API 版:切子图方法与多个 forward 分别独立推理方法的比较(torch 2.6/2.10 同一份代码)。
 
 与 multi_stage_contrast_demo.py 对应,五种推理方式:
   1. 原始完整浮点模型(注:torch.export 的 .module() 与原模型共享参数,
@@ -11,7 +11,7 @@
      其精度劣化);本脚本 try/except 优雅降级,加载失败即跳过 mode4
   5. 由完整量化模型切多个子图再分段推理的量化模型(切点按结构自动定位)
 
-2.10 适配与 multi_stage_demo_2_10.py 相同(torchao/utils_2_10、动态 batch
+2.10 适配与 multi_stage_demo_2_10.py 相同(torchao/axquant、动态 batch
 捕获、CIFAR-10 + resnet50_2_10 全 epoch checkpoint、切点自动定位)。
 
 预期:1≈2(同源浮点),3≈5(高精度一致);4 若可运行则明显劣化。
@@ -28,21 +28,19 @@ from torch import Tensor
 from torchvision.models.resnet import ResNet, Bottleneck, BasicBlock
 from typing import Callable, List, Optional, Type, Union
 
-from torchao.quantization.pt2e.quantize_pt2e import (
+from axquant import (
     prepare_qat_pt2e,
     convert_pt2e,
-)
-from torchao.quantization.pt2e import move_exported_model_to_eval
-from utils_2_10.ax_quantizer import AXQuantizer
-from utils_2_10.train_utils import (
+    move_exported_model_to_eval,
+    capture,
+    AXQuantizer,
     load_model,
     cifar10_data_loaders,
     evaluate,
+    extract_subgraph,
 )
-from utils_2_10.extract import extract_subgraph
-import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401
 
-from multi_stage.multi_stage_demo_2_10 import capture, find_stage_cuts
+from multi_stage.multi_stage_demo_axquant import find_stage_cuts
 
 SEED = 42
 
@@ -106,7 +104,7 @@ if __name__ == "__main__":
     model.fc = torch.nn.Linear(model.fc.in_features, 10).to("cuda")
 
     # 准备 3. 完整量化模型(load_state_dict 同时把共享参数覆盖进 model)
-    exported_model = capture(model.train(), example_inputs)
+    exported_model = capture(model.train(), example_inputs, dynamic_batch=True)
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
     prepared_model.load_state_dict(torch.load(ckpt, weights_only=True))
     quantized_model = convert_pt2e(prepared_model)
@@ -132,7 +130,7 @@ if __name__ == "__main__":
                              (stage2, (1, 256, 56, 56)),
                              (stage3, (1, 1024, 14, 14))):
             ex_s = (torch.rand(*shape).to("cuda"),)
-            gm_s = capture(stage.train(), ex_s)
+            gm_s = capture(stage.train(), ex_s, dynamic_batch=True)
             prep_s = prepare_qat_pt2e(gm_s, quantizer)
             prep_s.load_state_dict(torch.load(ckpt, weights_only=True), strict=False)
             quant_stages.append(convert_pt2e(prep_s))

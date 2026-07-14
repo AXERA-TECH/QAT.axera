@@ -1,17 +1,23 @@
-# torch 2.10 版(与同名去 _2_10 文件对应,脚本化移植)。改动:
-#   1. torchao PT2E + utils_2_10;export_for_training → torch.export.export;
-#   2. move_exported_model_to_eval / disable|enable_fake_quant / disable|enable_observer
-#      改从 torchao.quantization.pt2e 取(接口同名,已验证存在);
-#   3. 产物带 _2_10 后缀。模型均先 eval 再导出,无训练态 BN 问题。
+# axquant 统一 API 版(torch 2.6 / 2.10 同一份代码,零版本分支)。
+# 版本差异(capture/导出/开关 API)由 axquant 内部消化;产物带 _ax 后缀。
 import torch
 import torch.nn as nn
 import numpy as np
 
-from torchao.quantization.pt2e.quantize_pt2e import (
+from axquant import (
     prepare_qat_pt2e,
     convert_pt2e,
+    capture,
+    move_exported_model_to_eval,
+    disable_fake_quant,
+    enable_fake_quant,
+    disable_observer,
+    enable_observer,
+    AXQuantizer,
+    dynamo_export,
+    onnx_simplify,
 )
-import torchao.quantization.pt2e as tao_pt2e
+
 import sys
 from pathlib import Path
 
@@ -21,67 +27,64 @@ project_root_str = str(project_root)
 if project_root_str not in sys.path:
     sys.path.append(project_root_str)
 
-from utils_2_10.ax_quantizer import AXQuantizer
-from utils_2_10.train_utils import dynamo_export, onnx_simplify
-import utils_2_10.quantized_decomposed_dequantize_per_channel
 
 import warnings
 warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
 warnings.filterwarnings(action='default', module=r'torch.ao.quantization')
 
 
-class ConvClipNet(nn.Module):
+class ClipNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv = nn.Conv2d(3, 16, 3, 1, 1, bias=False)
-        self.bn = nn.BatchNorm2d(16)
+        self.linear = nn.Linear(64, 128, bias=False)
 
     def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        x = torch.clamp(x, min=0, max=2)
+        x = self.linear(x)
+        x = torch.clamp(x, min=0, max=10)
         return x
 
 
 torch.manual_seed(42)
-input = torch.rand(1, 3, 64, 64)
+input = torch.rand(1, 64)
 
-float_model = ConvClipNet()
+float_model = ClipNet()
 float_model.eval()
 with torch.no_grad():
     float_out = float_model(input)
 
-float_path = "./test_clamp/conv_clip_float_2_10.onnx"
-# dynamo_export(float_model, input, float_path)
-# print(f"float onnx exported to {float_path}")
+float_path = "./test_clamp/linear_clip_float_ax.onnx"
+dynamo_export(float_model, input, float_path)
+print(f"float onnx exported to {float_path}")
 
 quantizer = AXQuantizer("./test_clamp/config.json")
-exported_model = torch.export.export(float_model, (input,)).module()
+
+exported_model = capture(float_model, (input,))
 prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
-tao_pt2e.move_exported_model_to_eval(prepared_model)
+move_exported_model_to_eval(prepared_model)
 
-prepared_model.apply(tao_pt2e.disable_fake_quant)
-prepared_model.apply(tao_pt2e.disable_observer)
+prepared_model.apply(disable_fake_quant)
+prepared_model.apply(disable_observer)
 with torch.no_grad():
     prepared_float_like_out = prepared_model(input)
 
-prepared_model.apply(tao_pt2e.enable_fake_quant)
-prepared_model.apply(tao_pt2e.enable_observer)
+prepared_model.apply(enable_fake_quant)
+prepared_model.apply(enable_observer)
 with torch.no_grad():
     prepared_model(input)
-prepared_model.apply(tao_pt2e.disable_observer)
+prepared_model.apply(disable_observer)
 with torch.no_grad():
     qat_out = prepared_model(input)
 
 quantized_model = convert_pt2e(prepared_model)
 
-qat_path = "./test_clamp/conv_clip_qat_2_10.onnx"
+qat_path = "./test_clamp/linear_clip_qat_ax.onnx"
 dynamo_export(quantized_model, input, qat_path)
 print(f"qat onnx exported to {qat_path}")
 
-sim_path = "./test_clamp/conv_clip_qat_2_10_sim.onnx"
+sim_path = "./test_clamp/linear_clip_qat_ax_sim.onnx"
 onnx_simplify(qat_path, sim_path)
+
 print(f"simplified onnx exported to {sim_path}")
 
 float_np = float_out.numpy()

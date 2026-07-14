@@ -1,7 +1,7 @@
-"""torch 2.10 版(与 train_resnet.py 对应):stage2 运行时循环复用的分段 QAT 训练。
+"""axquant 统一 API 版(与 train_resnet.py 对应,torch 2.6/2.10 同一份代码):stage2 循环复用的分段 QAT。
 
 相对 2.6 版的改动:
-  1. torchao PT2E + utils_2_10;模型类(ResNetFloat/Stage1/2/3/MultiStage)
+  1. axquant 统一 API(内部自动路由 torch.ao/torchao);模型类(ResNetFloat/Stage1/2/3/MultiStage)
      无 torch.ao 依赖,直接从原模块 import 复用;
   2. export_for_training → torch.export.export + 动态 batch(训练 batch=32);
   3. float 参考导出用 eval 深拷贝(2.10 不能直接导训练态 BN);
@@ -17,17 +17,14 @@ import copy
 
 import torch
 
-from torchao.quantization.pt2e.quantize_pt2e import (
+from axquant import (
     prepare_qat_pt2e,
     convert_pt2e,
-)
-from torchao.quantization.pt2e import move_exported_model_to_eval
-
-from utils_2_10.ax_quantizer import (
+    move_exported_model_to_eval,
+    capture,
+    export_float_reference,
     load_config,
     AXQuantizer,
-)
-from utils_2_10.train_utils import (
     load_model,
     train_one_epoch,
     imagenet_data_loaders,
@@ -35,7 +32,6 @@ from utils_2_10.train_utils import (
     onnx_simplify,
     evaluate,
 )
-import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401
 from reuse_conv.train_resnet import (
     ResNetFloat,
     ResNetStage1,
@@ -47,15 +43,6 @@ from reuse_conv.train_resnet import (
 
 import warnings
 warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
-
-
-def capture(model, example_inputs):
-    # 动态 batch 捕获,原因见 resnet50_2_10/train.py capture()
-    x = example_inputs[0]
-    capture_inputs = (torch.cat([x, x], dim=0) if x.shape[0] == 1 else x,)
-    batch = torch.export.Dim("batch", min=1, max=1024)
-    return torch.export.export(
-        model, capture_inputs, dynamic_shapes=({0: batch},)).module()
 
 
 def train():
@@ -78,22 +65,22 @@ def train():
     float_model_stage3.load_state_dict(state_dict)
 
     # float 参考导出(eval 深拷贝,2.10 不能直接导训练态 BN)
-    dynamo_export(copy.deepcopy(float_model).eval(), example_inputs_stage1,
-                  "./reuse_conv/resnet50_float_2_10.onnx")
-    dynamo_export(copy.deepcopy(float_model_stage1).eval(), example_inputs_stage1,
-                  "./reuse_conv/resnet50_float_stage1_2_10.onnx")
-    dynamo_export(copy.deepcopy(float_model_stage2).eval(), example_inputs_stage2,
-                  "./reuse_conv/resnet50_float_stage2_2_10.onnx")
-    dynamo_export(copy.deepcopy(float_model_stage3).eval(), example_inputs_stage3,
-                  "./reuse_conv/resnet50_float_stage3_2_10.onnx")
+    export_float_reference(float_model, example_inputs_stage1,
+                  "./reuse_conv/resnet50_float_ax.onnx")
+    export_float_reference(float_model_stage1, example_inputs_stage1,
+                  "./reuse_conv/resnet50_float_stage1_ax.onnx")
+    export_float_reference(float_model_stage2, example_inputs_stage2,
+                  "./reuse_conv/resnet50_float_stage2_ax.onnx")
+    export_float_reference(float_model_stage3, example_inputs_stage3,
+                  "./reuse_conv/resnet50_float_stage3_ax.onnx")
 
     # quantizer
     global_config, regional_configs = load_config("./reuse_conv/config.json")
     quantizer = AXQuantizer("./reuse_conv/config.json", annotate_bias=False)
 
-    exported_model_stage1 = capture(float_model_stage1.train(), example_inputs_stage1)
-    exported_model_stage2 = capture(float_model_stage2.train(), example_inputs_stage2)
-    exported_model_stage3 = capture(float_model_stage3.train(), example_inputs_stage3)
+    exported_model_stage1 = capture(float_model_stage1.train(), example_inputs_stage1, dynamic_batch=True)
+    exported_model_stage2 = capture(float_model_stage2.train(), example_inputs_stage2, dynamic_batch=True)
+    exported_model_stage3 = capture(float_model_stage3.train(), example_inputs_stage3, dynamic_batch=True)
     prepared_model_stage1 = prepare_qat_pt2e(exported_model_stage1, quantizer)
     prepared_model_stage2 = prepare_qat_pt2e(exported_model_stage2, quantizer)
     prepared_model_stage3 = prepare_qat_pt2e(exported_model_stage3, quantizer)
@@ -114,10 +101,10 @@ def train():
     for nepoch in range(num_epochs):
         train_one_epoch(model, criterion, optimizer, data_loader, "cuda", num_train_batches)
 
-    torch.save(model.state_dict(), "./reuse_conv/resnet50_2_10.pth")
-    torch.save(model.stage1.state_dict(), "./reuse_conv/resnet50_stage1_2_10.pth")
-    torch.save(model.stage2.state_dict(), "./reuse_conv/resnet50_stage2_2_10.pth")
-    torch.save(model.stage3.state_dict(), "./reuse_conv/resnet50_stage3_2_10.pth")
+    torch.save(model.state_dict(), "./reuse_conv/resnet50_ax.pth")
+    torch.save(model.stage1.state_dict(), "./reuse_conv/resnet50_stage1_ax.pth")
+    torch.save(model.stage2.state_dict(), "./reuse_conv/resnet50_stage2_ax.pth")
+    torch.save(model.stage3.state_dict(), "./reuse_conv/resnet50_stage3_ax.pth")
 
     # evaluate
     float_stage = copy.deepcopy(model)
@@ -143,17 +130,17 @@ def train():
     print(f"[eval] 分段量化(fake data): top1={top1.avg:.3f} top5={top5.avg:.3f}")
 
     # export(修正原版双层 tuple 笔误)
-    qat_path_stage1 = "./reuse_conv/resnet50_qat_stage1_2_10.onnx"
+    qat_path_stage1 = "./reuse_conv/resnet50_qat_stage1_ax.onnx"
     dynamo_export(quantized_model_stage1, example_inputs_stage1, qat_path_stage1)
-    qat_path_stage2 = "./reuse_conv/resnet50_qat_stage2_2_10.onnx"
+    qat_path_stage2 = "./reuse_conv/resnet50_qat_stage2_ax.onnx"
     dynamo_export(quantized_model_stage2, example_inputs_stage2, qat_path_stage2)
-    qat_path_stage3 = "./reuse_conv/resnet50_qat_stage3_2_10.onnx"
+    qat_path_stage3 = "./reuse_conv/resnet50_qat_stage3_ax.onnx"
     dynamo_export(quantized_model_stage3, example_inputs_stage3, qat_path_stage3)
 
     # onnx simplify
-    onnx_simplify(qat_path_stage1, "./reuse_conv/resnet50_qat_sim_stage1_2_10.onnx")
-    onnx_simplify(qat_path_stage2, "./reuse_conv/resnet50_qat_sim_stage2_2_10.onnx")
-    onnx_simplify(qat_path_stage3, "./reuse_conv/resnet50_qat_sim_stage3_2_10.onnx")
+    onnx_simplify(qat_path_stage1, "./reuse_conv/resnet50_qat_sim_stage1_ax.onnx")
+    onnx_simplify(qat_path_stage2, "./reuse_conv/resnet50_qat_sim_stage2_ax.onnx")
+    onnx_simplify(qat_path_stage3, "./reuse_conv/resnet50_qat_sim_stage3_ax.onnx")
 
 
 if __name__ == "__main__":

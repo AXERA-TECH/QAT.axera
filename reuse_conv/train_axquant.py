@@ -1,12 +1,12 @@
-"""torch 2.10 版(与 train.py 对应):运行时循环复用 prepared 子模型的训练示例。
+"""axquant 统一 API 版(与 train.py 对应,torch 2.6/2.10 同一份代码):运行时循环复用 prepared 子模型。
 
 相对 2.6 版的改动:
-  1. torchao PT2E + utils_2_10;
+  1. axquant 统一 API(内部自动路由 torch.ao/torchao);
   2. export_for_training → torch.export.export(输入 batch 固定为 1,静态捕获即可);
-  3. torch.save 取消注释(存 tmp_2_10.pth 供 test_2_10.py 使用);
+  3. torch.save 取消注释(存 tmp_ax.pth 供 test_2_10.py 使用);
   4. 产物统一写入 reuse_conv/ 目录并带 _2_10 后缀(原版写仓库根目录)。
 备注:本示例的"复用"是运行时循环(module1 每个 forward 被调两次),图内无展开,
-remove_reused_bn_param_hack 与原版一样保持注释(2.10 实现见 utils_2_10/ax_quantizer.py)。
+remove_reused_bn_param_hack 与原版一样保持注释(2.10 实现见 axquant/ax_quantizer.py)。
 
 运行(qat-dev):
   cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
@@ -15,18 +15,16 @@ remove_reused_bn_param_hack 与原版一样保持注释(2.10 实现见 utils_2_1
 import torch
 import torch.nn as nn
 
-from torchao.quantization.pt2e.quantize_pt2e import (
+from axquant import (
     prepare_qat_pt2e,
     convert_pt2e,
-)
-
-from utils_2_10.ax_quantizer import (
+    capture,
     load_config,
     AXQuantizer,
     remove_reused_bn_param_hack,  # noqa: F401 与原版保持一致(调用点见下方注释)
+    dynamo_export,
+    onnx_simplify,
 )
-from utils_2_10.train_utils import dynamo_export, onnx_simplify
-import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401
 
 import warnings
 warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
@@ -76,9 +74,9 @@ def train():
     quantizer = AXQuantizer("./reuse_conv/config.json", annotate_bias=False)
 
     # export qat model(2.10:export_for_training 已废弃)
-    exported_model0 = torch.export.export(float_model0.train(), (input,)).module()
-    exported_model1 = torch.export.export(float_model1.train(), (input,)).module()
-    exported_model2 = torch.export.export(float_model2.train(), (input,)).module()
+    exported_model0 = capture(float_model0.train(), (input,))
+    exported_model1 = capture(float_model1.train(), (input,))
+    exported_model2 = capture(float_model2.train(), (input,))
 
     prepared_model0 = prepare_qat_pt2e(exported_model0, quantizer)
     prepared_model1 = prepare_qat_pt2e(exported_model1, quantizer)
@@ -97,7 +95,7 @@ def train():
     loss.backward()
     optimizer.step()
 
-    torch.save(prepared_model1.state_dict(), "./reuse_conv/tmp_2_10.pth")
+    torch.save(prepared_model1.state_dict(), "./reuse_conv/tmp_ax.pth")
 
     # convert
     # remove_reused_bn_param_hack(new_model.module1)
@@ -106,16 +104,16 @@ def train():
     quantized_model2 = convert_pt2e(new_model.module2)
 
     # export
-    qat_path = "./reuse_conv/tmp0_qat_2_10.onnx"
+    qat_path = "./reuse_conv/tmp0_qat_ax.onnx"
     dynamo_export(quantized_model0, input, qat_path)
-    qat_path = "./reuse_conv/tmp1_qat_2_10.onnx"
+    qat_path = "./reuse_conv/tmp1_qat_ax.onnx"
     dynamo_export(quantized_model1, input, qat_path)
-    qat_path = "./reuse_conv/tmp2_qat_2_10.onnx"
+    qat_path = "./reuse_conv/tmp2_qat_ax.onnx"
     dynamo_export(quantized_model2, input, qat_path)
 
     # onnx simplify
-    sim_path = "./reuse_conv/tmp1_qat_2_10_sim.onnx"
-    onnx_simplify("./reuse_conv/tmp1_qat_2_10.onnx", sim_path)
+    sim_path = "./reuse_conv/tmp1_qat_ax_sim.onnx"
+    onnx_simplify("./reuse_conv/tmp1_qat_ax.onnx", sim_path)
 
 
 if __name__ == "__main__":

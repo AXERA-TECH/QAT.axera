@@ -1,11 +1,11 @@
-"""torch 2.10 版(与 yolov5_demo.py 对应):多输入 BEV 风格小网络的 QAT 导出。
+"""axquant 统一 API 版(与 yolov5_demo.py 对应,torch 2.6/2.10 同一份代码):多输入 BEV 小网络 QAT 导出。
 
 覆盖算子:ConvTranspose、cat、grid_sample、permute/reshape(共享观察器传播)、
-多层 Linear——正好检验 utils_2_10 里 convtranspose/concat/gridsample/linear
+多层 Linear——正好检验 axquant 里 convtranspose/concat/gridsample/linear
 注解器与 propagate_annotation 的 2.10 适配。
 
 相对 2.6 版的改动:
-  1. torchao PT2E + utils_2_10;export_for_training → torch.export.export;
+  1. axquant 统一 API(内部自动路由 torch.ao/torchao);export_for_training → torch.export.export;
   2. float 导出用 eval 深拷贝(2.10 不能直接导训练态 BN);
   3. 原版 `AXQuantizer()` 无参调用在现行签名(config_file 必填)下本就报错,
      修正为带配置构造(原版笔误,2.6 上同样跑不了);
@@ -15,22 +15,18 @@
   cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
     /home/heqi/miniforge3/envs/torch2.10/bin/python minimum/yolov5_demo_2_10.py
 """
-import copy
-
 import torch
 import torch.nn as nn
 
-from torchao.quantization.pt2e.quantize_pt2e import (
+from axquant import (
     prepare_qat_pt2e,
     convert_pt2e,
-)
-
-from utils_2_10.ax_quantizer import (
-    load_config,
+    capture,
+    export_float_reference,
     AXQuantizer,
+    dynamo_export,
+    onnx_simplify,
 )
-from utils_2_10.train_utils import dynamo_export, onnx_simplify
-import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401
 
 import warnings
 warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
@@ -138,21 +134,21 @@ inputs = (input, grid0, grid1)
 
 # export float_model(eval 深拷贝,2.10 不能直接导训练态 BN)
 float_model = Net().to("cuda")
-float_path = "./minimum/yolov5_float_2_10.onnx"
-dynamo_export(copy.deepcopy(float_model).eval(), inputs, float_path)
+float_path = "./minimum/yolov5_float_ax.onnx"
+export_float_reference(float_model, inputs, float_path)
 
 # set quantizer(原版 AXQuantizer() 无参调用是笔误,现行签名 config_file 必填)
 quantizer = AXQuantizer("./minimum/config.json")
 
 # export qat model
-exported_model = torch.export.export(float_model.train(), inputs).module()
+exported_model = capture(float_model.train(), inputs)
 prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 quantized_model = convert_pt2e(prepared_model)
 
 # export
-qat_path = "./minimum/yolov5_qat_2_10.onnx"
+qat_path = "./minimum/yolov5_qat_ax.onnx"
 dynamo_export(quantized_model, inputs, qat_path)
 
 # onnxsim
-sim_path = "./minimum/yolov5_qat_2_10_sim.onnx"
+sim_path = "./minimum/yolov5_qat_ax_sim.onnx"
 onnx_simplify(qat_path, sim_path)

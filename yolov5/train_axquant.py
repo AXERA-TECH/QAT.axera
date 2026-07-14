@@ -1,18 +1,8 @@
 # ============================================================================
-# torch 2.10 版参考补丁(与 train.py 对应;本文件同样不在本仓库内运行,
-# 用法见 yolov5/README.md:拷入 ultralytics/yolov5 检出目录使用)
-#
-# 相对 2.6 版的 QAT 改动(其余 1000+ 行与原版一致):
-#   1. prepare_qat_pt2e/convert_pt2e 改从 torchao 导入(torch.ao 的 PT2E
-#      在 2.10 已坏,见 QAT.axera/plan_torch210.md);
-#   2. export_for_training(已废弃)→ torch.export.export;若训练 batch 与
-#      example inputs 不一致,需按 QAT.axera/resnet50_2_10/train.py 的
-#      capture() 加动态 batch(README 的示例命令 --batch-size 1 时无需);
-#   3. AXQuantizer() 无参调用改为带 config(现行签名 config_file 必填);
-#   4. 伴随文件:需把 QAT.axera/utils_2_10/ 下的 ax_quantizer.py、
-#      ax_quantizer_utils.py、quantized_decomposed_dequantize_per_channel.py
-#      (而非 utils/ 的 2.6 版)拷到 yolov5 检出目录,并确保环境按
-#      QAT.axera/env.md 配置(onnx 1.19.1/onnxscript 0.6.2/onnx-ir 0.1.15)。
+# axquant 统一 API 版参考补丁(与 train.py 对应;本文件不在本仓库内运行,
+# 用法:拷入 ultralytics/yolov5 检出目录,并把 QAT.axera/axquant/ 整个包
+# 拷到同目录(或加入 PYTHONPATH);环境按 QAT.axera/env.md(2.10)或
+# requirements.txt(2.6)配置。torch 2.6/2.10 均可运行,零版本分支。
 # ============================================================================
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
@@ -243,10 +233,7 @@ def train(hyp, opt, device, callbacks):
     # from IPython import embed; embed()
     import onnx
     from onnxslim import slim
-    # 2.10: XNNPACKQuantizer 原版即未使用,且 torch.ao 版已弃用,不再导入
-    from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
-    from ax_quantizer import AXQuantizer, load_config
-    import quantized_decomposed_dequantize_per_channel
+    from axquant import AXQuantizer, load_config, prepare_qat_pt2e, convert_pt2e, capture
 
     inputs = torch.rand(1, 3, 640, 640).to("cuda")
     onnx_program = torch.onnx.export(model, (inputs,), dynamo=True)
@@ -386,10 +373,10 @@ def train(hyp, opt, device, callbacks):
 
     # quantizer
     global_config, regional_configs = load_config("./config.json")
-    quantizer = AXQuantizer("config.json")  # 2.10: config_file 必填(原版无参调用是笔误)
+    quantizer = AXQuantizer("config.json")  # config_file 必填(原版无参调用是笔误)
     quantizer.set_global(global_config)
     quantizer.set_regional(regional_configs)
-    exported_model = torch.export.export(model, (inputs,)).module()  # 2.10: export_for_training 已废弃
+    exported_model = capture(model, (inputs,), dynamic_batch=True)
     # from IPython import embed; embed()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
     model = prepared_model
