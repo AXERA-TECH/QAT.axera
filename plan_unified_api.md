@@ -35,8 +35,9 @@
 axquant/                    # 包名已定(D1)
   __init__.py               # 公共 API 出口(下表)
   _compat.py                # 版本探测 + 符号路由(import 时一次性完成)
-  capture.py                # capture(model, example_inputs, dynamic_batch=False,
-                            #         batch_max=1024)
+  capture.py                # capture(model, example_inputs, dynamic_shapes=None)
+                            #   (设计期为 dynamic_batch/batch_max 参数组,
+                            #    R7 起改为 torch 原生 dynamic_shapes 透传)
                             #   2.6 → export_for_training
                             #   2.10 → torch.export.export;dynamic_batch=True 时
                             #          自动处理 0/1 特化与显式上界三件套
@@ -86,8 +87,8 @@ axquant/                    # 包名已定(D1)
 
 - 适配层只 re-export + 薄封装，**不改 utils/utils_2_10 的任何实现**——等价性
   结论不失效，回归只需验"路由正确 + 封装正确"；
-- `capture(dynamic_batch=...)` 的默认值取 False（与 2.6 行为一致），训练场景
-  显式开——避免隐式行为差异；
+- capture 的动态形状默认关闭（与 2.6 行为一致），训练场景显式声明
+  （R7 起以 dynamic_shapes 原生规格传入）——避免隐式行为差异；
 - 回归成本集中在 R2（矩阵 + 冒烟，约半小时机器时间）。
 
 ## 八、v2 修订：采纳方案 B'（合并实现，2026-07-14 与用户确认）
@@ -101,8 +102,8 @@ axquant/                    # 包名已定(D1)
    using_training_ir 参数差异）；
 2. `train_utils.dynamo_export` 内部 if（2.6：export+optimize()；
    2.10：optimize=False + onnx.inliner 内联 + 域清理）；
-3. `capture()` 内部 if（2.6：export_for_training；2.10：export，
-   dynamic_batch=True 时自动处理 0/1 特化与显式上界）。
+3. `capture()` 内部 if（2.6：export_for_training；2.10：export；
+   动态形状经历两版:便利参数组 → R7 定稿为 dynamic_shapes 原生透传）。
 
 依据（移植史盘点）：两套 utils 的差异 ≈95% 是 import；4 个重写注解器
 （aten 直匹配）、hack（按 num_batches_tracked）、metadata 双格式解析、
@@ -147,3 +148,10 @@ env_check 矩阵 + 等价性 harness)。
   minimum/yolov5 产物名回归上游;test_clamp 例外(非上游内容,
   无后缀原件为未跟踪 WIP 未动,统一版保留 _axquant 名)。
   终态:上游文件名 × 双版本统一内容。
+- **R7 ✅**(2026-07-15,用户反馈驱动,c31dcea):capture 动态形状 API 定稿——
+  废弃 dynamic_batch/dynamic_hw/hw_multiple_of 便利参数组(表达力受限),
+  改为 **torch.export 原生 `dynamic_shapes` 原样透传**(任意输入/任意维,
+  整除性 guard 用派生维 k*_dim);仅保留 0/1 特化 example 自动翻倍一项便利,
+  显式 max/派生维等坑位以 docstring 指引 + "照抄报错 Suggested fixes"路径
+  覆盖。13 处调用点迁移;原生 API 探针(TinyNet 2*_h、resnet50 32*_h)、
+  迁移回归、2.6 忽略路径全绿。
