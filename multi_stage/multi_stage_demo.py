@@ -24,6 +24,7 @@
     /home/heqi/miniforge3/envs/torch2.10/bin/python multi_stage/multi_stage_demo_2_10.py
 """
 import torch
+from torch.export import Dim
 
 from utils import (
     prepare_qat_pt2e,
@@ -89,7 +90,7 @@ if __name__ == "__main__":
     model.fc = torch.nn.Linear(model.fc.in_features, 10).to("cuda")
 
     # quantized model
-    exported_model = capture(model.train(), example_inputs, dynamic_batch=True)
+    exported_model = capture(model.train(), example_inputs, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
     prepared_model.load_state_dict(

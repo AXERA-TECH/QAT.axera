@@ -59,7 +59,7 @@ python env_check/check_onnx_structure.py --model xxx_sim.onnx --sim \
 1. **PT2E 必须走 torchao**：torch.ao 的 `convert_pt2e` 在 2.10 已坏（`KeyError: 'source_fn_stack'`）；
    且 torch.ao 与 torchao 的 QuantizationSpec 类型不互通，量化器需整体换命名空间（统一 utils 已完成）。
 2. **图捕获**：`export_for_training` 废弃 → `torch.export.export`；训练场景需**动态 batch 三件套**
-   （声明 `Dim("batch", min=1, max=N)`、捕获样例 batch≥2、上界必须显式），见 `utils/capture.py`(capture(dynamic_batch=True);H/W 动态用 dynamic_hw=True + hw_multiple_of=下采样倍数,如 resnet50 取 32——下采样网络会产生 H/W 整除性 guard,报 ConstraintViolation 时 Suggested fixes 会给出应设倍数)。
+   （声明 `Dim("batch", min=1, max=N)`、捕获样例 batch≥2、上界必须显式），见 `utils/capture.py`——capture 的 `dynamic_shapes` 参数为 torch.export 原生语义原样透传(batch/H/W/任意维;整除性 guard 用派生维 k*_dim 表达,报 ConstraintViolation 时照抄 Suggested fixes 即可;0/1 特化由 capture 自动处理)。
 3. **导出必须 `optimize=False`**：新版 onnxscript 的 optimize 会折权重 DQ 链/去重 zp 常量
    （onnxscript 0.6.2 修了前者，后者仍会污染混合 4bit 标记）。代价是 raw 中间产物臃肿——
    **看图/交付一律用 `*_sim.onnx`**（sim 与 2.6 同样干净，324 节点级）。

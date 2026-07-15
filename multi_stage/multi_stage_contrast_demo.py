@@ -23,6 +23,7 @@
 import copy
 
 import torch
+from torch.export import Dim
 import torch.nn as nn
 from torch import Tensor
 from torchvision.models.resnet import ResNet, Bottleneck, BasicBlock
@@ -104,7 +105,7 @@ if __name__ == "__main__":
     model.fc = torch.nn.Linear(model.fc.in_features, 10).to("cuda")
 
     # 准备 3. 完整量化模型(load_state_dict 同时把共享参数覆盖进 model)
-    exported_model = capture(model.train(), example_inputs, dynamic_batch=True)
+    exported_model = capture(model.train(), example_inputs, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
     prepared_model.load_state_dict(torch.load(ckpt, weights_only=True))
     quantized_model = convert_pt2e(prepared_model)
@@ -130,7 +131,7 @@ if __name__ == "__main__":
                              (stage2, (1, 256, 56, 56)),
                              (stage3, (1, 1024, 14, 14))):
             ex_s = (torch.rand(*shape).to("cuda"),)
-            gm_s = capture(stage.train(), ex_s, dynamic_batch=True)
+            gm_s = capture(stage.train(), ex_s, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
             prep_s = prepare_qat_pt2e(gm_s, quantizer)
             prep_s.load_state_dict(torch.load(ckpt, weights_only=True), strict=False)
             quant_stages.append(convert_pt2e(prep_s))

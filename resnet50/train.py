@@ -17,6 +17,7 @@ import argparse
 import os
 
 import torch
+from torch.export import Dim
 
 from utils import (
     IS_TORCH_210,
@@ -86,8 +87,8 @@ def train(args):
     # quantizer
     quantizer = AXQuantizer(args.config)
 
-    # 训练/评测的 batch 与 example 不同 → dynamic_batch=True(2.6 下为无操作)
-    exported_model = capture(float_model.train(), example_inputs, dynamic_batch=True)
+    # 训练/评测的 batch 与 example 不同 → dynamic_shapes 声明 batch 动态(2.6 下忽略)
+    exported_model = capture(float_model.train(), example_inputs, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
     prepared_model_qat = prepare_qat_pt2e(exported_model, quantizer)
 
     # 防静默漏注解(plan 风险 3):resnet50 预期插入 ~130 个观察点,阈值取宽松下限

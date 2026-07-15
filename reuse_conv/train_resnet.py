@@ -16,6 +16,7 @@
 import copy
 
 import torch
+from torch.export import Dim
 import torch.nn as nn
 from torch import Tensor
 from torchvision.models.resnet import ResNet, Bottleneck, BasicBlock
@@ -299,9 +300,9 @@ def train():
     global_config, regional_configs = load_config("./reuse_conv/config.json")
     quantizer = AXQuantizer("./reuse_conv/config.json", annotate_bias=False)
 
-    exported_model_stage1 = capture(float_model_stage1.train(), example_inputs_stage1, dynamic_batch=True)
-    exported_model_stage2 = capture(float_model_stage2.train(), example_inputs_stage2, dynamic_batch=True)
-    exported_model_stage3 = capture(float_model_stage3.train(), example_inputs_stage3, dynamic_batch=True)
+    exported_model_stage1 = capture(float_model_stage1.train(), example_inputs_stage1, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
+    exported_model_stage2 = capture(float_model_stage2.train(), example_inputs_stage2, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
+    exported_model_stage3 = capture(float_model_stage3.train(), example_inputs_stage3, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
     prepared_model_stage1 = prepare_qat_pt2e(exported_model_stage1, quantizer)
     prepared_model_stage2 = prepare_qat_pt2e(exported_model_stage2, quantizer)
     prepared_model_stage3 = prepare_qat_pt2e(exported_model_stage3, quantizer)

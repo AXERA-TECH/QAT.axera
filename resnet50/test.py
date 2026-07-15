@@ -6,6 +6,7 @@
 import argparse
 
 import torch
+from torch.export import Dim
 import onnxruntime as ort
 
 from utils import (
@@ -47,7 +48,7 @@ def test(args):
 
     # quant model(capture 与训练一致 → state_dict 键对齐)
     example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    exported_model = capture(float_model.train(), example_inputs, dynamic_batch=True)
+    exported_model = capture(float_model.train(), example_inputs, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
     prepared_model.load_state_dict(

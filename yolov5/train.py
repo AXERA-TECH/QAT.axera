@@ -376,7 +376,7 @@ def train(hyp, opt, device, callbacks):
     quantizer = AXQuantizer("config.json")  # config_file 必填(原版无参调用是笔误)
     quantizer.set_global(global_config)
     quantizer.set_regional(regional_configs)
-    exported_model = capture(model, (inputs,), dynamic_batch=True)
+    exported_model = capture(model, (inputs,), dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},))
     # from IPython import embed; embed()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
     model = prepared_model

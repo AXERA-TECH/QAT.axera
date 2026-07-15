@@ -10,6 +10,7 @@ convert+导出,验证「observer 状态 → 量化参数 → 导出 QDQ」计算
 import argparse
 
 import torch
+from torch.export import Dim
 
 from utils import (
     IS_TORCH_210,
@@ -36,7 +37,7 @@ def main(args):
 
     quantizer = AXQuantizer(args.config)
     example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    exported_model = capture(float_model.train(), example_inputs, dynamic_batch=True)
+    exported_model = capture(float_model.train(), example_inputs, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},))
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
     # strict 加载:键不匹配会直接报错,本身就是跨体系兼容性的检验点

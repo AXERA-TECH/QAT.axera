@@ -14,6 +14,7 @@
 import copy
 
 import torch
+from torch.export import Dim
 import onnxruntime as ort
 
 from utils import (
@@ -58,11 +59,11 @@ def test():
 
     # quant model(capture 与训练一致 → state_dict 键对齐)
     prepared_model_stage1 = prepare_qat_pt2e(
-        capture(float_model_stage1.train(), example_inputs_stage1, dynamic_batch=True), quantizer)
+        capture(float_model_stage1.train(), example_inputs_stage1, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},)), quantizer)
     prepared_model_stage2 = prepare_qat_pt2e(
-        capture(float_model_stage2.train(), example_inputs_stage2, dynamic_batch=True), quantizer)
+        capture(float_model_stage2.train(), example_inputs_stage2, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},)), quantizer)
     prepared_model_stage3 = prepare_qat_pt2e(
-        capture(float_model_stage3.train(), example_inputs_stage3, dynamic_batch=True), quantizer)
+        capture(float_model_stage3.train(), example_inputs_stage3, dynamic_shapes=({0: Dim("batch", min=1, max=1024)},)), quantizer)
     prepared_model_stage1.load_state_dict(
         torch.load("./reuse_conv/resnet50_stage1_ax.pth", weights_only=True))
     prepared_model_stage2.load_state_dict(
