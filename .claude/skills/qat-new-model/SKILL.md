@@ -63,6 +63,10 @@ else:  # 纯 8/16bit 全量化
 先单独跑一句 `capture(model.train(), (ex,))`,报错在这一步解决(改模型写法),
 不要带着捕获问题进量化流程。
 
+注意:这一步产出的**不是 ONNX**,而是 PyTorch 的 FX 图(aten 算子级的
+`torch.fx.GraphModule`,仍可训练/前向)——注解、prepare、QAT 训练、convert
+全在这张图上进行;ONNX 到第⑧步 `dynamo_export` 才出现。
+
 ## 算子覆盖面核对(新模型最容易踩空的一步)
 
 AXQuantizer 只注解 `AXQuantizer.OPS` 列表内的算子(utils/ax_quantizer.py):
