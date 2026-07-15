@@ -51,7 +51,7 @@ python env_check/check_onnx_structure.py --model xxx_sim.onnx --sim \
 | `resnet50/` | train/test/cross_export(统一版)+ 5 份量化配置 + 预训练 pth + 金标准 onnx;产物带 `_2_6/_2_10` 环境标签(等价性对照用);旧 6/23 checkpoint 归档于 checkpoint_legacy0623/ |
 | `multi_stage/`、`reuse_conv/`、`yolov5/train.py` | 统一 demo(上游同名;train_resnet.py 类定义已内联) |
 | `test_clamp/*_demo_axquant.py` | 统一版(该目录非上游内容;无后缀原件为本机未跟踪 WIP,未动) |
-| `.claude/skills/` | Claude Code 项目技能:qat-new-model(新模型接入全流程)/qat-run(跑训练与 demo)/qat-check(结构体检) |
+| `.claude/skills/` | Claude Code 项目技能:qat-new-model(新模型接入全流程)/qat-run(跑训练与 demo)/qat-check(结构体检)/qat-migrate-2_10(老项目 2.6→2.10 迁移排雷) |
 | `requirements.txt` / `requirements_2_10.txt` | 2.6 基线 / 2.10 环境(见 env.md) |
 | `env.md` / `plan_torch210.md` / `plan_unified_api.md` / `env_check/` | 迁移与统一 API 的文档、验证工具、金标准基线 |
 
