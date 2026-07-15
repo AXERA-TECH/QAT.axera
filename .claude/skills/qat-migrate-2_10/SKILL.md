@@ -1,6 +1,6 @@
 ---
 name: qat-migrate-2_10
-description: 把一个已在 torch 2.6 跑通的 PT2E QAT 项目迁到 torch 2.10 的排雷清单——命名空间/元数据/BN patch/导出后处理四类坑的识别与修法。迁移别的 AXERA 系 QAT 项目(如 QAT.Ultralytics)时用这个。
+description: 把一个已在 torch 2.6 跑通的 PT2E QAT 项目迁到 torch 2.10 的排雷清单——命名空间/元数据/BN patch/导出后处理四类坑的识别与修法。迁移任何基于 torch.ao PT2E + 自定义 Quantizer 的 QAT 项目时用这个。
 ---
 
 # qat-migrate-2_10:torch 2.6 → 2.10 QAT 迁移排雷
@@ -109,24 +109,23 @@ grep 到某个雷点符号 ≠ 它在跑。**先追调用链**:入口脚本(trai
 4. 结构体检用 qat-check(checker + 基线对比);跑通后先小批量训 1 epoch 直接
    导出部署到 NPU 验证全链路(见 qat-new-model),再投完整训练。
 
-## 已印证案例(torch 2.10 实测)
+## 实测错误签名参考(在 torch 2.10 上会遇到的两处典型报错)
 
-QAT.Ultralytics(YOLO11 QAT,克隆在 cache/,已 .gitignore)是本清单的现实印证。
-在 torch 2.10 env 跑它的最小 QAT 闭环,实测两处报错(与本清单逐一对应):
+在 torch 2.10 env 跑一个 torch.ao PT2E + 自定义 Quantizer 项目的最小 QAT 闭环,
+典型会撞到下面两处(与 ①②逐一对应),按签名即可快速定位:
 
-- **它真实的 AXQuantizer**:`prepare_qat_pt2e → annotate → _annotate_conv` 即报
+- **prepare 阶段先炸(响亮)**:`prepare_qat_pt2e → annotate → conv 注解器` 报
   `ImportError: cannot import name 'gm_using_training_ir' from 'torch._export'`
-  ——**在 prepare 阶段就炸,根本走不到 convert**(对应 ②「先炸」)。
-- **原厂 XNNPACKQuantizer 隔离验证**(绕开其自定义代码):prepare 正常、注解 4 个,
-  `convert_pt2e` 报 `KeyError: 'source_fn_stack'`——**证明是 torch.ao PT2E 内核
-  本身在 2.10 已坏**,非项目代码问题(对应 ①)。torch 2.10 启动时也会打印
-  官方横幅劝迁 torchao。
-- **pt2e_bn_patch** 原地激活成功(export_utils 仍在,对应 ③ 的「原地不报错」)。
+  ——**根本走不到 convert**(对应 ②「先炸」)。
+- **convert 阶段炸(内核问题)**:把自定义量化器换成 torch 原厂
+  `XNNPACKQuantizer` 做隔离验证——prepare 正常、有注解,但 `convert_pt2e` 报
+  `KeyError: 'source_fn_stack'`。**用原厂量化器复现 = 证明是 torch.ao PT2E 内核
+  本身在 2.10 已坏,非你的代码**(对应 ①)。torch 2.10 启动时也会打印官方横幅劝迁
+  torchao。
+- 附:`pt2e_bn_patch` 一类 BN patch 在原地 2.10 会激活成功(export_utils 仍在),
+  对应 ③「原地不报错」。
 
-甄别结论:其 quantizer.py/quantizer_utils.py/ax_quantizer_lsq.py 为死代码
-(全仓无活引用),按第 0 步可直接跳过;活路径只有 ax_quantizer(config 版)一条。
-其 requirements 已是 onnx 1.19.1/onnxscript 0.6.2/onnx-ir 0.1.15,onnx 生态零迁移。
-
-> 复现脚本(桩掉 ultralytics 重 __init__ 只加载量化内核,避免装整个 YOLO 栈;
-> CPU 即可)不入库,思路见上;要重跑照本节描述在 torch 2.10 env 造一个
-> conv-bn-relu 最小网络即可。
+**快速证伤手法(不必装目标项目的全部依赖)**:桩掉目标包的重 `__init__`
+(用 `types.ModuleType` + `__path__` 指向真实目录,跳过与量化内核无关的重依赖),
+只加载它的量化内核模块;再在 torch 2.10 env 用一个 conv-bn-relu 最小网络跑
+prepare/convert,CPU 即可。既能证伤,又能在动手迁移前摸清活/死代码边界。
