@@ -14,7 +14,8 @@ description: 新模型接入 QAT 全流程——可捕获性预检、算子覆�
 ```python
 from utils import (AXQuantizer, capture, prepare_qat_pt2e, convert_pt2e,
                    move_exported_model_to_eval, dynamo_export,
-                   export_float_reference, simplify_and_fix_4bit_dtype)
+                   export_float_reference, onnx_simplify,
+                   simplify_and_fix_4bit_dtype)
 
 export_float_reference(float_model, example_input, "float.onnx")   # ① float 参考
 gm = capture(float_model.train(), (example_input,))                # ② 捕获(训练态)
@@ -25,7 +26,12 @@ prepared = prepare_qat_pt2e(gm, quantizer)                         # ⑤
 quantized = convert_pt2e(prepared)                                 # ⑦
 move_exported_model_to_eval(quantized)                             # (FP32 区域残留 BN 必需)
 dynamo_export(quantized, example_input, "qat.onnx")                # ⑧
-simplify_and_fix_4bit_dtype("qat.onnx", "qat_sim.onnx")            # ⑨ → pulsar2
+
+# ⑨ 后处理(选择条件详见下方"⑨ 后处理怎么选"),产物 qat_sim.onnx 交 pulsar2:
+if config_含_4bit_或_FP32_混合区域:
+    simplify_and_fix_4bit_dtype("qat.onnx", "qat_sim.onnx")
+else:  # 纯 8/16bit 全量化
+    onnx_simplify("qat.onnx", "qat_sim.onnx")
 ```
 
 - ① 不可跳过:它是数值对齐与结构体检的对照物,且内置 eval 深拷贝
