@@ -57,8 +57,9 @@ axquant/                    # 包名已定(D1)
 | 图工具 | `extract_subgraph`、`remove_reused_bn_param_hack` |
 | 训练辅助 | `load_model`、数据 loaders、`train_one_epoch`、`evaluate`（D3 已定:进公共 API） |
 
-版本路由规则：`torch >= 2.10` → utils_2_10/torchao，否则 → utils/torch.ao。
-官方支持点仅 2.6 与 2.10（已验证）；2.7–2.9 未验证，import 时打一条告警。
+版本路由规则（R8 起严格判定）：`torch == 2.10`（major.minor）→ torchao，
+否则 → torch.ao。官方支持点严格限定 2.6 与 2.10；其他版本（含 2.11+）
+未验证，import 告警并按 2.6 路径处理，需重新验证后才放行。
 
 ## 五、阶段划分
 
@@ -96,7 +97,7 @@ axquant/                    # 包名已定(D1)
 **变更**：axquant 不再是"路由到两套 utils 的壳"（方案 A），而是**唯一的合并
 实现**——版本分支下沉到实现内部的三个最小点位，其余全部单份代码：
 
-1. `_compat.py`：唯一的条件 import 块（torch>=2.10 → torchao，否则 torch.ao；
+1. `_compat.py`：唯一的条件 import 块（torch==2.10 严格判定 → torchao，否则 torch.ao；
    符号改名在此对齐，如 WrapperModule/annotate_*_qspec_map/DerivedObserver*；
    另提供 `get_aten_graph_module_for_pattern()` 包装吃掉 2.6 的
    using_training_ir 参数差异）；
@@ -155,3 +156,7 @@ env_check 矩阵 + 等价性 harness)。
   显式 max/派生维等坑位以 docstring 指引 + "照抄报错 Suggested fixes"路径
   覆盖。13 处调用点迁移;原生 API 探针(TinyNet 2*_h、resnet50 32*_h)、
   迁移回归、2.6 忽略路径全绿。
+- **R8 ✅**(2026-07-15,用户指示):版本路由改**严格判定** `== (2, 10)`
+  (原 `>=` 会让未验证的 2.11+ 静默走 torchao 路径);非 2.6/2.10 一律
+  import 告警且按 2.6 路径处理,新 torch 版本须按 plan_torch210.md 的
+  验证方法重新过一遍(结构 checker/矩阵/等价性)后再修改路由放行。

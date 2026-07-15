@@ -1,8 +1,10 @@
 """utils 版本兼容层:全包唯一的条件 import 块。
 
-torch >= 2.10 → torchao 体系(torch.ao 的 PT2E 在 2.10 已坏,见 plan_torch210.md);
-torch <  2.10 → torch.ao 体系(以 2.6 为验证基线)。
-官方支持点:2.6 与 >=2.10;2.7–2.9 未经验证,import 时告警。
+torch == 2.10 → torchao 体系(torch.ao 的 PT2E 在 2.10 已坏,见 plan_torch210.md);
+其余版本      → torch.ao 体系(以 2.6 为验证基线)。
+官方支持点**严格限定 2.6 与 2.10**(按 major.minor 判定,补丁版如 2.10.1 视同
+2.10);其他版本未经验证,import 时告警且按 2.6 路径处理(大概率不可用,
+新版本需先按 plan_torch210.md 的方法重新验证后再放行)。
 
 两套体系的符号改名差异在此统一对齐为 2.6 时代的内部命名
 (_WrapperModule/_annotate_*_qspec_map/_get_module_name_filter/
@@ -15,12 +17,13 @@ import warnings
 import torch
 
 _ver = tuple(int(v) for v in torch.__version__.split("+")[0].split(".")[:2])
-IS_TORCH_210 = _ver >= (2, 10)
+IS_TORCH_210 = _ver == (2, 10)  # 严格判定:仅 2.10.x 走 torchao,不含更高版本
 BACKEND = "torchao" if IS_TORCH_210 else "torch.ao"
 
-if not IS_TORCH_210 and _ver != (2, 6):
+if _ver not in ((2, 6), (2, 10)):
     warnings.warn(
-        f"QAT.axera utils 官方支持 torch 2.6 与 >=2.10,当前 {torch.__version__} 未经验证",
+        f"QAT.axera utils 官方支持 torch 2.6 与 2.10(严格判定),当前 {torch.__version__} "
+        f"未经验证,将按 torch.ao(2.6)路径处理——大概率不可用,请先完成版本验证",
         stacklevel=2,
     )
 
