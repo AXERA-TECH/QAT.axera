@@ -20,6 +20,38 @@ grep 到某个雷点符号 ≠ 它在跑。**先追调用链**:入口脚本(trai
 改了纯属浪费且引入风险。判定:`grep -rn "import <模块>" 全仓 --include=*.py`,
 无活引用(只有自引用或注释掉的 import)即死代码。
 
+## 最快路径:drop-in 覆盖(同源项目首选)
+
+AXERA 系 QAT 项目(QAT.axera / QAT.Ultralytics 等)的量化 utils **同源**——就是同一套
+自定义 Quantizer 的不同拷贝。若目标项目的量化文件与本仓库 `utils/` 同源,**别逐行改,
+直接用本仓库已迁移好的文件覆盖**,一次拿下 ①②④。
+
+**判定同源(两条都成立即可覆盖)**:
+```bash
+# 注解器集合一致
+diff <(grep -oE 'register_annotator\("[a-z0-9_]+"\)' 本仓库/utils/ax_quantizer_utils.py|sort -u) \
+     <(grep -oE 'register_annotator\("[a-z0-9_]+"\)' 目标/…/ax_quantizer_utils.py|sort -u)
+# OPS 列表一致 + 目标从这些模块 import 的公共符号本仓库都提供
+grep -rhoE 'from .*utils\.(ax_quantizer|quant_utils|train_utils) import[^(]*' 目标仓 --include=*.py
+```
+分歧若 100% 是迁移本身(import 路由、gm_using_training_ir、get_source_partitions→aten、
+optimize)且**零业务专属逻辑**,即可覆盖。本仓库 utils 用**相对 import**(`from ._compat`
+/`from .ax_quantizer_utils`),落到任何 `xxx/utils/` 包都能解析。
+
+**覆盖清单**:`ax_quantizer.py` / `ax_quantizer_utils.py`(✅②) / `quant_utils.py`(✅④) /
+`train_utils.py`(✅④,注意确认目标未在此放业务专属的数据/模型加载) /
+`quantized_decomposed_dequantize_per_channel.py` / `_compat.py`(新增)。
+
+**覆盖顺带解决**:① utils 侧命名空间、② 注解器全部、④ dynamo_export/simplify。
+**覆盖后仍需逐项处理的项目专属 glue**(下面四类坑里对应部分):
+- ① 外部调用点:engine/export 里的 `from torch.ao...quantize_pt2e import` + move/allow → 路由 `_compat`;
+- ②' 捕获入口:`export_for_training` → `_compat.capture_for_training`;
+- ③ 项目自带的 `pt2e_bn_patch` 一类(保留业务 BN 超参)→ import 改版本感知;
+- ④ 内联的 `torch.onnx.export(...).optimize()`(不在 utils 里)→ 去掉 optimize。
+
+覆盖后务必用最小闭环 repro 验证(含目标关键结构,如 YOLO 的 `torch.cat` 分支,
+确认 concat 被注解)。**若不同源**(注解器/OPS 有实质差异),回退到下面逐项改。
+
 ## 四类坑(每类:症状 → grep 识别 → 修法)
 
 ### ① PT2E 命名空间:torch.ao 必须整体迁 torchao(判决点)
