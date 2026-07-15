@@ -98,6 +98,18 @@ leakyrelu / gridsample。要点:
 2. bias 现状:仅 conv1d/2d 默认派生量化(int32,scale=Sa×Sw),Linear/
    ConvTranspose 不量化,config 无 bias 通道(现状与待定项见 env_check/README.md)。
 
+## 先打通链路,再投入训练(强烈建议)
+
+QAT 工具接入完成后,**别急着开完整训练**。先用小批量数据训 1 个 epoch
+(甚至几十步),立即走完 ⑦convert → ⑧导出 → ⑨simplify,把 `_sim.onnx`
+送 pulsar2 编译、部署到 Axera NPU 跑通一次前向——**优先验证"QAT→导出→NPU
+部署"整条链路畅通**。
+
+理由:量化配置/算子覆盖面/导出结构的问题(某算子 NPU 不支持、pulsar2 编译
+报错、shape 不被接受),在这条最短闭环里就会暴露,精度好不好此刻不重要。
+链路一旦跑通,再投入完整训练调精度,避免训到收敛才发现卡在部署环节、
+配置推倒重来。此时的 checkpoint/onnx 是临时验证品,可随时清理。
+
 ## 验收(每个新模型都做)
 
 1. checker:raw 加 `--ort`(数值对齐),sim 用 `--sim`——命令与已知例外解读
