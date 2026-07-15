@@ -134,12 +134,18 @@ optimize)且**零业务专属逻辑**,即可覆盖。本仓库 utils 用**相对
 ## 迁移顺序与验证
 
 1. **先跑最小闭环证伤**:torch2.10 env 里跑一次目标项目的 QAT(prepare→convert),
-   十有八九停在 ①的 convert_pt2e KeyError——确认伤在 torch.ao 而非用法;
-2. 按 ①→②→③→④ 修,每步小闭环回归(一个 minimal 网络跑通再上真模型);
-3. **双环境等价性对照**:同 config、同 seed,2.6 与 2.10 各跑一遍,比注解计数、
-   逐 batch loss、导出 sim 结构(参考本仓库四层证据:结构/qparam/训练行为/精度);
+   十有八九停在 ②的 prepare 阶段 `gm_using_training_ir` ImportError(自定义注解器)
+   或 ①的 convert_pt2e `source_fn_stack` KeyError——确认伤在 torch.ao 而非用法;
+2. **判同源**(见「最快路径」节):
+   - 同源 → **drop-in 覆盖** utils 量化文件(一举 ①②④)+ 补项目专属 glue
+     (外部调用点 ①、capture ②'、pt2e_bn_patch ③、内联 optimize ④);
+   - 不同源 → 按 ①→②→③→④ 逐项修,每步小闭环回归;
+3. **覆盖/改完必做最小闭环 repro**:造含目标关键结构的小网络(带 `torch.cat` 分支
+   验 concat、带 BN 验 BN patch),过 prepare+convert,并断言关键节点被注解;
 4. 结构体检用 qat-check(checker + 基线对比);跑通后先小批量训 1 epoch 直接
    导出部署到 NPU 验证全链路(见 qat-new-model),再投完整训练。
+   有 2.6 基线时可加双环境等价性对照(同 config/seed 比注解计数、逐 batch loss、
+   sim 结构;参考本仓库四层证据:结构/qparam/训练行为/精度)。
 
 ## 实测错误签名参考(在 torch 2.10 上会遇到的两处典型报错)
 
