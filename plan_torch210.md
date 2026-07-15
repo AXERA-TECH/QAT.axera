@@ -1,5 +1,9 @@
 # QAT.axera torch 2.6 → 2.10 适配规划
 
+> 注:历史文档(P0–P4 迁移知识库)。内文的 utils_2_10/resnet50_2_10/*_2_10
+> 命名反映当时的双轨布局;2026-07-14 起已统一为 utils/ 并对齐上游目录
+> (演进记录见 plan_unified_api.md)。
+
 > 环境：`/home/heqi/miniforge3/envs/torch2.10`（配套依据见 `env.md`）
 > 结构检查工具与金标准基线：`env_check/`（见其 README）
 > 撰写：2026-07-09,基于远程机实测,非文档推断

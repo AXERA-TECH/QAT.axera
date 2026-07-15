@@ -1,5 +1,9 @@
 # env_check — torch2.10 环境与导出结构检查
 
+> 注:本文档大部分为迁移过程的历史记录,内文的 utils_2_10/resnet50_2_10 等
+> 路径反映当时布局;2026-07-14 起实现层已统一为 utils/、目录对齐上游
+> (见 README_2_10.md 与 plan_unified_api.md)。
+
 ## 文件说明
 
 | 文件 | 作用 |
@@ -45,7 +49,7 @@ metadata(准确),**落笔**按张量名翻转 dtype;若 zp 常量被去重共享
 (2.6 raw:判定 21 节点 → 波及 133、污染 112;2.10 optimize=False raw:
 23 → 23、污染 0)。
 
-**实现设计**(~20 行,改 utils_2_10/quant_utils.py 的 tensors_4bit 构建段):
+**实现设计**(~20 行,改 utils/quant_utils.py——统一实现层,原 utils_2_10——的 tensors_4bit 构建段):
 1. 第一遍只收集「4bit 节点集合」(现有 metadata 判定逻辑不动);
 2. 第二遍对每个待标记的 initializer 名:统计引用它的全部 Q/DQ 节点,
    若存在非 4bit 引用者 → 复制私有常量副本(如 name+"_4bit",同值),
