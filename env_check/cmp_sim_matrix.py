@@ -2,7 +2,7 @@
 import onnx
 from collections import Counter
 
-D = "resnet50_2_10"
+D = "resnet50"
 PAIRS = [
     ("config(全局U8/S8)", f"{D}/resnet50_qat_2_6_sim.onnx", f"{D}/resnet50_qat_2_10_sim.onnx"),
     ("4w4f_all(全局4bit)", f"{D}/resnet50_qat_2_6_4w4f_all_sim.onnx", f"{D}/resnet50_qat_2_10_4w4f_all_sim.onnx"),

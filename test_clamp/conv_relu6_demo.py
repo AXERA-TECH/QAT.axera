@@ -1,22 +1,11 @@
-# utils 统一 API 版(torch 2.6 / 2.10 同一份代码,零版本分支)。
-# 版本差异(capture/导出/开关 API)由 utils 内部消化;产物带 _ax 后缀。
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from utils import (
+from torch.ao.quantization.quantize_pt2e import (
     prepare_qat_pt2e,
     convert_pt2e,
-    capture,
-    move_exported_model_to_eval,
-    disable_fake_quant,
-    enable_fake_quant,
-    disable_observer,
-    enable_observer,
-    AXQuantizer,
-    dynamo_export,
-    onnx_simplify,
 )
 import sys
 from pathlib import Path
@@ -27,6 +16,9 @@ project_root_str = str(project_root)
 if project_root_str not in sys.path:
     sys.path.append(project_root_str)
 
+from utils.ax_quantizer import AXQuantizer
+from utils.train_utils import dynamo_export, onnx_simplify
+import utils.quantized_decomposed_dequantize_per_channel
 
 import warnings
 warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
@@ -53,31 +45,31 @@ float_model.eval()
 with torch.no_grad():
     float_out = float_model(input)
 
-float_path = "./test_clamp/conv_relu6_float_ax.onnx"
+float_path = "./test_clamp/conv_relu6_float.onnx"
 dynamo_export(float_model, input, float_path)
 print(f"float onnx exported to {float_path}")
 
 quantizer = AXQuantizer("./test_clamp/config.json")
-exported_model = capture(float_model, (input,))
+exported_model = torch.export.export_for_training(float_model, (input,)).module()
 prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
-move_exported_model_to_eval(prepared_model)
+torch.ao.quantization.move_exported_model_to_eval(prepared_model)
 
 with torch.no_grad():
     qat_out = prepared_model(input)
 
-prepared_model.apply(disable_fake_quant)
+prepared_model.apply(torch.ao.quantization.disable_fake_quant)
 with torch.no_grad():
     qat_no_fq_out = prepared_model(input)
 
-prepared_model.apply(enable_fake_quant)
+prepared_model.apply(torch.ao.quantization.enable_fake_quant)
 quantized_model = convert_pt2e(prepared_model)
 
-qat_path = "./test_clamp/conv_relu6_qat_ax.onnx"
+qat_path = "./test_clamp/conv_relu6_qat.onnx"
 dynamo_export(quantized_model, input, qat_path)
 print(f"qat onnx exported to {qat_path}")
 
-sim_path = "./test_clamp/conv_relu6_qat_ax_sim.onnx"
+sim_path = "./test_clamp/conv_relu6_qat_sim.onnx"
 onnx_simplify(qat_path, sim_path)
 print(f"simplified onnx exported to {sim_path}")
 

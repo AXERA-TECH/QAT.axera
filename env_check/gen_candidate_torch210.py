@@ -1,4 +1,4 @@
-"""生成 QDQ 候选导出(axquant 统一 API 版),供 check_onnx_structure.py 检查。
+"""生成 QDQ 候选导出(utils 统一 API 版),供 check_onnx_structure.py 检查。
 
 历史:P0 时代本脚本用 utils_2_10 直连;R4 起收敛到 axquant(同一份代码
 torch2.6/2.10 均可运行,文件名保留 torch210 以延续文档引用)。
@@ -18,7 +18,7 @@ sys.path.insert(0, REPO_ROOT)
 
 import torch
 
-from axquant import (
+from utils import (
     AXQuantizer,
     capture,
     prepare_qat_pt2e,

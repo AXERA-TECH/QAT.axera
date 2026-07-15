@@ -1,43 +1,41 @@
-import torch  # Version: 2.6.0+cu118
+"""utils 统一 API 版(统一 utils API,torch 2.6/2.10 同一份代码):多输入 BEV 小网络 QAT 导出。
+
+覆盖算子:ConvTranspose、cat、grid_sample、permute/reshape(共享观察器传播)、
+多层 Linear——正好检验 axquant 里 convtranspose/concat/gridsample/linear
+注解器与 propagate_annotation 的 2.10 适配。
+
+相对 2.6 版的改动:
+  1. utils 统一 API(内部自动路由 torch.ao/torchao);export_for_training → torch.export.export;
+  2. float 导出用 eval 深拷贝(2.10 不能直接导训练态 BN);
+  3. 原版 `AXQuantizer()` 无参调用在现行签名(config_file 必填)下本就报错,
+     修正为带配置构造(原版笔误,2.6 上同样跑不了);
+  4. 产物带 _2_10 后缀。
+
+运行(qat-dev):
+  cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
+    /home/heqi/miniforge3/envs/torch2.10/bin/python minimum/yolov5_demo_2_10.py
+"""
+import torch
 import torch.nn as nn
 
-from torch.ao.quantization.quantizer.xnnpack_quantizer import (
-    XNNPACKQuantizer,
-    get_symmetric_quantization_config,
-)
-from torch.ao.quantization.quantize_pt2e import (
-  prepare_qat_pt2e,
-  convert_pt2e,
-)
-
-# from utils.quantizer import (
-#     AXQuantizer,
-#     get_quantization_config,
-# )
-from utils.ax_quantizer import(
-    load_config,
+from utils import (
+    prepare_qat_pt2e,
+    convert_pt2e,
+    capture,
+    export_float_reference,
     AXQuantizer,
+    dynamo_export,
+    onnx_simplify,
 )
-from utils.train_utils import dynamo_export, onnx_simplify
-import utils.quantized_decomposed_dequantize_per_channel
 
-# Set up warnings
 import warnings
-warnings.filterwarnings(
-    action='ignore',
-    category=DeprecationWarning,
-    module=r'.*'
-)
-warnings.filterwarnings(
-    action='default',
-    module=r'torch.ao.quantization'
-)
+warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
 
 
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        
+
         self.conv1_1 = nn.Sequential(
             nn.Conv2d(3, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
@@ -121,36 +119,31 @@ class Net(nn.Module):
         output = torch.cat([grid0_out, grid1_out], dim=0)  # (2, 64, h, w)
 
         # mlp
-        # n, c, h, w = output.shape  # (2, 64, h, w)
         output = output.permute(2, 3, 0, 1)  # (h, w, 2, 64)
         output = output.reshape(-1, 128)  # (h * w, 128), good for nhwc layout
         output = self.mlp(output)
-        
+
         return output
 
 
 # example inputs
 input = torch.rand(1, 3, 256, 768).to("cuda")
-grid0 =  torch.rand(1, 120, 40, 2).to("cuda")
-grid1 =  torch.rand(1, 120, 40, 2).to("cuda")
+grid0 = torch.rand(1, 120, 40, 2).to("cuda")
+grid1 = torch.rand(1, 120, 40, 2).to("cuda")
 inputs = (input, grid0, grid1)
 
-# export float_model
+# export float_model(eval 深拷贝,2.10 不能直接导训练态 BN)
 float_model = Net().to("cuda")
 float_path = "./minimum/yolov5_float.onnx"
-dynamo_export(float_model, inputs, float_path)
+export_float_reference(float_model, inputs, float_path)
 
-# set quantizer
-global_config, regional_configs = load_config("./minimum/config.json")
-quantizer = AXQuantizer()
-quantizer.set_global(global_config)
-quantizer.set_regional(regional_configs)
+# set quantizer(原版 AXQuantizer() 无参调用是笔误,现行签名 config_file 必填)
+quantizer = AXQuantizer("./minimum/config.json")
 
 # export qat model
-exported_model = torch.export.export_for_training(float_model, inputs).module()
+exported_model = capture(float_model.train(), inputs)
 prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 quantized_model = convert_pt2e(prepared_model)
-# print(quantized_model.graph)
 
 # export
 qat_path = "./minimum/yolov5_qat.onnx"

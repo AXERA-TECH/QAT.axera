@@ -1,15 +1,15 @@
-"""axquant —— QAT.axera 的统一量化 API(torch 2.6 / 2.10 双版本,单一入口,
+"""utils —— QAT.axera 的统一量化 API(torch 2.6 / 2.10 双版本,单一入口,
 唯一的合并实现层)。
 
 用法(用户代码零版本分支):
 
-    from axquant import (
+    from utils import (
         AXQuantizer, capture, prepare_qat_pt2e, convert_pt2e,
         dynamo_export, export_float_reference, simplify_and_fix_4bit_dtype,
     )
 
 版本差异全部收敛在 _compat.py(条件 import)、capture()、dynamo_export()
-三个点位,其余为单份实现。设计与决策见 plan_unified_api.md(v2,方案 B')。
+三个点位,其余为单份实现。设计与决策见 plan_unified_api.md(v2,方案 B';包原名 axquant,后更名 utils 与上游对齐)。
 import 本包即自动完成 quantized_decomposed per-channel 的 torchlib 映射注册。
 """
 from ._compat import (  # noqa: F401

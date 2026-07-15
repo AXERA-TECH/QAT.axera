@@ -1,4 +1,4 @@
-"""axquant 版本兼容层:全包唯一的条件 import 块。
+"""utils 版本兼容层:全包唯一的条件 import 块。
 
 torch >= 2.10 → torchao 体系(torch.ao 的 PT2E 在 2.10 已坏,见 plan_torch210.md);
 torch <  2.10 → torch.ao 体系(以 2.6 为验证基线)。
@@ -20,7 +20,7 @@ BACKEND = "torchao" if IS_TORCH_210 else "torch.ao"
 
 if not IS_TORCH_210 and _ver != (2, 6):
     warnings.warn(
-        f"axquant 官方支持 torch 2.6 与 >=2.10,当前 {torch.__version__} 未经验证",
+        f"QAT.axera utils 官方支持 torch 2.6 与 >=2.10,当前 {torch.__version__} 未经验证",
         stacklevel=2,
     )
 

@@ -1,70 +1,53 @@
-"""
-切子图方法与多个 forward 分别独立推理方法的比较
+"""utils 统一 API 版:切子图方法与多个 forward 分别独立推理方法的比较(torch 2.6/2.10 同一份代码)。
 
-### 修改 quantizer
-临时将权重量化由 per-channel 对称量化改为 per-tensor 对称量化，即
-将 https://github.com/AXERA-TECH/QAT.axera/blob/main/utils/ax_quantizer.py#L144
-从
-weight_qscheme = torch.per_channel_symmetric
-改为
-weight_qscheme = torch.per_tensor_symmetric
-否则无法复现错误分段推理方式。
+与 multi_stage_contrast_demo.py 对应,五种推理方式:
+  1. 原始完整浮点模型(注:torch.export 的 .module() 与原模型共享参数,
+     checkpoint 加载后原地覆盖 → mode1 = QAT 训练权重的浮点推理)
+  2. multi stage 浮点模型(权重取自 mode1 被覆盖后的 state_dict,与 1 同源)
+  3. 完整量化模型
+  4. 由 multi stage 浮点模型每个 stage 分别独立加载参数的量化模型
+     ⚠️ 原 demo docstring 已说明:per-channel 权重跨段 channel 数不同,
+     无法直接分段加载(需手改 ax_quantizer weight_qscheme=per_tensor 复现
+     其精度劣化);本脚本 try/except 优雅降级,加载失败即跳过 mode4
+  5. 由完整量化模型切多个子图再分段推理的量化模型(切点按结构自动定位)
 
-通常来说多个 forward 分别独立加载参数的错误分段推理方式，会由于不同段 weight 的 channel 数不同无法加载权重。但是也有可能由于巧合正好每个阶段对应 weight 的 chennel 都相同，也可以加载
-由于 demo 使用的 ResNet50 不能加载 per-channel 量化参数，因此手改一下量化方法，来复现并证明错误分段推理方式的精度问题
+2.10 适配与 multi_stage_demo_2_10.py 相同(torchao/axquant、动态 batch
+捕获、CIFAR-10 + resnet50 全 epoch checkpoint、切点自动定位)。
 
-### 训练
-运行
-python3 -m resnet50.train
-确保 ./resnet50/checkpoint/last_checkpoint.pth 存在
+预期:1≈2(同源浮点),3≈5(高精度一致);4 若可运行则明显劣化。
 
-### 推理
-运行
-python3 -m multi_stage.multi_stage_contrast_demo
-
-### 预期结果
-上述 demo会进行5次推理，分别是：
-
-1. 原始完整浮点模型
-2. multi stage 浮点模型
-3. 完整量化模型
-4. 由 multi stage 浮点模型每个 stage 分别独立加载参数的量化模型
-5. 由完整量化模型切多个子图再进行分 stage 推理的量化模型
-
-预期结果： 1 和 2 精度一致为高精度；3 和 5 精度一致接近高精度；4 精度明显劣化
+运行(qat-dev):
+  cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
+    /home/heqi/miniforge3/envs/torch2.10/bin/python multi_stage/multi_stage_contrast_demo_2_10.py
 """
 import copy
+
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torchvision.models.resnet import ResNet, Bottleneck, BasicBlock
-from typing import Any, Callable, List, Optional, Type, Union
+from typing import Callable, List, Optional, Type, Union
 
-from torch.ao.quantization.quantize_pt2e import (
+from utils import (
     prepare_qat_pt2e,
     convert_pt2e,
-)
-from utils.ax_quantizer import(
-    load_config,
+    move_exported_model_to_eval,
+    capture,
     AXQuantizer,
-)
-from utils.train_utils import (
     load_model,
-    imagenet_data_loaders,
-    dynamo_export,
-    onnx_simplify,
+    cifar10_data_loaders,
     evaluate,
+    extract_subgraph,
 )
-from utils.extract import extract_subgraph
-from IPython import embed
 
+from multi_stage.multi_stage_demo import find_stage_cuts
+
+SEED = 42
 
 
 class ThreeStageResNet(ResNet):
-    """
-    模仿 ResNet 定义一个推理分成三个阶段的 3S ResNet
-    这里的 _forward_impl_n 组合起来与原本 ResNet 的 _forward_impl 等价
-    """
+    """模仿 ResNet 定义一个推理分成三个阶段的 3S ResNet(与 2.6 版一致)。"""
+
     def __init__(
         self,
         block: Type[Union[BasicBlock, Bottleneck]],
@@ -79,29 +62,23 @@ class ThreeStageResNet(ResNet):
         super(ThreeStageResNet, self).__init__(block=block, layers=layers)
 
     def _forward_impl_stage1(self, x: Tensor) -> Tensor:
-        # See note [TorchScript super()]
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-
         x = self.layer1(x)
-
         return x
-    
+
     def _forward_impl_stage2(self, x: Tensor) -> Tensor:
         x = self.layer2(x)
         x = self.layer3(x)
-
         return x
-    
+
     def _forward_impl_stage3(self, x: Tensor) -> Tensor:
         x = self.layer4(x)
-
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
-
         return x
 
     def forward1(self, x: Tensor) -> Tensor:
@@ -115,35 +92,27 @@ class ThreeStageResNet(ResNet):
 
 
 if __name__ == "__main__":
-    """
-    在主函数中，会分别进行五种模型的推理，分别是
-    1. 原始完整浮点模型
-    2. multi stage 浮点模型
-    3. 完整量化模型
-    4. 由 multi stage 浮点模型每个 stage 分别独立加载参数的量化模型
-    5. 由完整量化模型切多个子图再进行分 stage 推理的量化模型
-    """
-    # 预训练权重
-    model_file = "./resnet50/resnet50_pretrained_float.pth"
-    # 数据集
-    data_loader, data_loader_test = imagenet_data_loaders("dataset/imagenet/")
+    torch.manual_seed(SEED)
+    ckpt = "./resnet50/checkpoint/last_checkpoint_2_10.pth"
+    data_loader, data_loader_test = cifar10_data_loaders("dataset/cifar10")
     example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    # quantizer
-    global_config, regional_configs = load_config("./resnet50/config.json")
-    quantizer = AXQuantizer()
-    quantizer.set_global(global_config)
-    quantizer.set_regional(regional_configs)
+    quantizer = AXQuantizer("./resnet50/config.json")
 
+    # 准备 1. 原始浮点模型(10 类 fc,种子对齐 checkpoint)
+    model = load_model("./resnet50/resnet50_pretrained_float.pth", "resnet50").to("cuda")
+    torch.manual_seed(SEED)
+    model.fc = torch.nn.Linear(model.fc.in_features, 10).to("cuda")
 
-    """
-    接下来准备五种模型
-    """
-    # 准备 1. 原始浮点模型
-    model = load_model(model_file, "resnet50").to("cuda")
+    # 准备 3. 完整量化模型(load_state_dict 同时把共享参数覆盖进 model)
+    exported_model = capture(model.train(), example_inputs, dynamic_batch=True)
+    prepared_model = prepare_qat_pt2e(exported_model, quantizer)
+    prepared_model.load_state_dict(torch.load(ckpt, weights_only=True))
+    quantized_model = convert_pt2e(prepared_model)
 
-    # 准备 2. multi stage 浮点模型
+    # 准备 2. multi stage 浮点模型(权重 = 被覆盖后的 model,与 mode1 同源)
     model3s = ThreeStageResNet(Bottleneck, [3, 4, 6, 3])  # ResNet50
-    model3s.load_state_dict(torch.load(model_file, weights_only=True))
+    model3s.fc = torch.nn.Linear(model3s.fc.in_features, 10)
+    model3s.load_state_dict(model.state_dict())
     model3s.to("cuda")
 
     model3s.forward = model3s.forward1
@@ -153,120 +122,68 @@ if __name__ == "__main__":
     model3s.forward = model3s.forward3
     stage3 = copy.deepcopy(model3s)  # float stage3
 
-    # 准备 3. 完整量化模型
-    example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    exported_model = torch.export.export_for_training(model, example_inputs).module()
-    prepared_model = prepare_qat_pt2e(exported_model, quantizer)
+    # 准备 4. 每个 stage 分别独立加载参数的量化模型(见文件头 ⚠️)
+    mode4_ok = True
+    try:
+        quant_stages = []
+        for stage, shape in ((stage1, (1, 3, 224, 224)),
+                             (stage2, (1, 256, 56, 56)),
+                             (stage3, (1, 1024, 14, 14))):
+            ex_s = (torch.rand(*shape).to("cuda"),)
+            gm_s = capture(stage.train(), ex_s, dynamic_batch=True)
+            prep_s = prepare_qat_pt2e(gm_s, quantizer)
+            prep_s.load_state_dict(torch.load(ckpt, weights_only=True), strict=False)
+            quant_stages.append(convert_pt2e(prep_s))
+        quantized_model_s1, quantized_model_s2, quantized_model_s3 = quant_stages
+    except RuntimeError as e:
+        mode4_ok = False
+        print(f"[mode4] 分段独立加载失败(per-channel 权重跨段不匹配,与原 demo docstring 一致): "
+              f"{str(e).splitlines()[0][:120]}")
 
-    prepared_model.load_state_dict(torch.load("./resnet50/checkpoint/last_checkpoint.pth"))
-    quantized_model = convert_pt2e(prepared_model)
+    # 准备 5. 完整量化模型切子图(切点自动定位,同 multi_stage_demo_2_10)
+    cuts = find_stage_cuts(quantized_model)
+    print(f"[cuts] {cuts}")
+    submodule_1 = extract_subgraph(quantized_model, [cuts[0][0]], [cuts[0][1]])
+    submodule_2 = extract_subgraph(quantized_model, [cuts[1][0]], [cuts[1][1]])
+    submodule_3 = extract_subgraph(quantized_model, [cuts[2][0]], [cuts[2][1]])
 
-    # 准备 4. 由 multi stage 浮点模型每个 stage 分别独立加载参数的量化模型
-    example_inputs_s1 = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    exported_model_s1 = torch.export.export_for_training(stage1, example_inputs_s1).module()
-    prepared_model_s1 = prepare_qat_pt2e(exported_model_s1, quantizer)
-
-    prepared_model_s1.load_state_dict(torch.load("./resnet50/checkpoint/last_checkpoint.pth"), strict=False)
-    quantized_model_s1 = convert_pt2e(prepared_model_s1)  # quant stage1
-
-    example_inputs_s2 = (torch.rand(1, 256, 56, 56).to("cuda"),)
-    exported_model_s2 = torch.export.export_for_training(stage2, example_inputs_s2).module()
-    prepared_model_s2 = prepare_qat_pt2e(exported_model_s2, quantizer)
-
-    prepared_model_s2.load_state_dict(torch.load("./resnet50/checkpoint/last_checkpoint.pth"), strict=False)
-    quantized_model_s2 = convert_pt2e(prepared_model_s2)  # quant stage2
-
-    example_inputs_s3 = (torch.rand(1, 1024, 14, 14).to("cuda"),)
-    exported_model_s3 = torch.export.export_for_training(stage3, example_inputs_s3).module()
-    prepared_model_s3 = prepare_qat_pt2e(exported_model_s3, quantizer)
-
-    prepared_model_s3.load_state_dict(torch.load("./resnet50/checkpoint/last_checkpoint.pth"), strict=False)
-    quantized_model_s3 = convert_pt2e(prepared_model_s3)  # quant stage3
-
-    # 准备 5. 由完整量化模型切多个子图再进行分 stage 推理的量化模型
-    """
-    找到和 ThreeStageResNet 一致的切分位置，可以通过以下几个可视化方
-
-    1. 导出浮点模型：
-    dynamo_export(model, example_inputs, "./tmp.onnx")
-    2. 导出量化模型：
-    dynamo_export(quantized_model, example_inputs, "./tmp_q.onnx")
-    3. 打印 gm.graph
-    print(quantized_model.graph)
-    4. 打印 readable 模型
-    quantized_model.print_readable()
-
-    起始和末尾都要有完整的量化节点，不能在 quant 和 dequant 之间分段
-    """
-    # 这里可能需要修改 subgraph 起止 node name
-    submodule_1 = extract_subgraph(quantized_model, ["quantize_per_tensor_default_1"], ["dequantize_per_tensor_default_134"])
-    submodule_2 = extract_subgraph(quantized_model, ["quantize_per_tensor_default_27"], ["dequantize_per_tensor_default_154"])
-    submodule_3 = extract_subgraph(quantized_model, ["quantize_per_tensor_default_101"], ["dequantize_per_tensor_default_127"])
-
-
-    """
-    接下来为多 multi stage 推理流程准备推理函数
-    以便使用已有的推理脚本
-    """
-    # multi stage 浮点模型
+    # 推理函数
     def model3s_forward(x):
-        stage1.eval()
-        stage2.eval()
-        stage3.eval()
+        stage1.eval(); stage2.eval(); stage3.eval()
+        return stage3(stage2(stage1(x)))
 
-        x = stage1(x)
-        x = stage2(x)
-        x = stage3(x)
-
-        return x
-
-    # 由 multi stage 浮点模型每个 stage 分别独立加载参数的量化模型
     def model3s_quant_forward(x):
-        torch.ao.quantization.move_exported_model_to_eval(quantized_model_s1)
-        torch.ao.quantization.move_exported_model_to_eval(quantized_model_s2)
-        torch.ao.quantization.move_exported_model_to_eval(quantized_model_s3)
+        move_exported_model_to_eval(quantized_model_s1)
+        move_exported_model_to_eval(quantized_model_s2)
+        move_exported_model_to_eval(quantized_model_s3)
+        return quantized_model_s3(quantized_model_s2(quantized_model_s1(x)))
 
-        x = quantized_model_s1(x)
-        x = quantized_model_s2(x)
-        x = quantized_model_s3(x)
-
-        return x
-
-    # 由完整量化模型切多个子图再进行分 stage 推理的量化模型
     def model3s_submodule_forward(x):
-        torch.ao.quantization.move_exported_model_to_eval(submodule_1)
-        torch.ao.quantization.move_exported_model_to_eval(submodule_2)
-        torch.ao.quantization.move_exported_model_to_eval(submodule_3)
+        move_exported_model_to_eval(submodule_1)
+        move_exported_model_to_eval(submodule_2)
+        move_exported_model_to_eval(submodule_3)
+        return submodule_3(submodule_2(submodule_1(x)))
 
-        x = submodule_1(x)
-        x = submodule_2(x)
-        x = submodule_3(x)
-
-        return x
-
-
-    """
-    最后推理并打印结果
-    """
-    # 推理前 100 个数据，快速对比结果；要推理完整测试集设置 total_size=None
+    # 推理前 100 个 batch;完整测试集设 total_size=None
     top1, top5 = evaluate(model.eval(), data_loader_test, total_size=100)
     top1_3s, top5_3s = evaluate(model3s_forward, data_loader_test, total_size=100)
     top1_q, top5_q = evaluate(quantized_model, data_loader_test, total_size=100)
-    top1_3sq, top5_3sq = evaluate(model3s_quant_forward, data_loader_test, total_size=100)
+    if mode4_ok:
+        top1_3sq, top5_3sq = evaluate(model3s_quant_forward, data_loader_test, total_size=100)
     top1_3ss, top5_3ss = evaluate(model3s_submodule_forward, data_loader_test, total_size=100)
 
-    # 打印
     def to_float(t):
         assert isinstance(t, torch.Tensor)
         return t.cpu().numpy().tolist()
-    print(f"model1: top1:{to_float(top1.avg)}, top5:{to_float(top5.avg)}")
-    print(f"model2: top1:{to_float(top1_3s.avg)}, top5:{to_float(top5_3s.avg)}")
-    print(f"model3: top1:{to_float(top1_q.avg)}, top5:{to_float(top5_q.avg)}")
-    print(f"model4: top1:{to_float(top1_3sq.avg)}, top5:{to_float(top5_3sq.avg)}")
-    print(f"model5: top1:{to_float(top1_3ss.avg)}, top5:{to_float(top5_3ss.avg)}")
+    print(f"model1(完整浮点):        top1:{to_float(top1.avg)}, top5:{to_float(top5.avg)}")
+    print(f"model2(3 段浮点):        top1:{to_float(top1_3s.avg)}, top5:{to_float(top5_3s.avg)}")
+    print(f"model3(完整量化):        top1:{to_float(top1_q.avg)}, top5:{to_float(top5_q.avg)}")
+    if mode4_ok:
+        print(f"model4(分段独立加载量化): top1:{to_float(top1_3sq.avg)}, top5:{to_float(top5_3sq.avg)}")
+    else:
+        print("model4(分段独立加载量化): 跳过(见上方 [mode4] 说明)")
+    print(f"model5(切子图分段量化):   top1:{to_float(top1_3ss.avg)}, top5:{to_float(top5_3ss.avg)}")
 
-    # 可以保存模型查比较化参数的区别
-    # dynamo_export(quantized_model, example_inputs, "./tmp_q.onnx")
-    # dynamo_export(quantized_model_s2, example_inputs_s2, "./tmp_3sq_2.onnx")
-    # dynamo_export(submodule_2, example_inputs_s2, "./tmp_3ss_2.onnx")
-    
+    assert abs(top1.avg - top1_3s.avg) < 0.5, "mode1 与 mode2 不一致!"
+    assert abs(top1_q.avg - top1_3ss.avg) < 0.5, "mode3 与 mode5 不一致!"
+    print("[OK] 1≈2(同源浮点)且 3≈5(切子图),与原 demo 预期一致")

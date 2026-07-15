@@ -1,10 +1,10 @@
-# axquant 统一 API 版(torch 2.6 / 2.10 同一份代码,零版本分支)。
-# 版本差异(capture/导出/开关 API)由 axquant 内部消化;产物带 _ax 后缀。
+# utils 统一 API 版(torch 2.6 / 2.10 同一份代码,零版本分支)。
+# 版本差异(capture/导出/开关 API)由 utils 内部消化;产物带 _ax 后缀。
 import torch
 import torch.nn as nn
 import numpy as np
 
-from axquant import (
+from utils import (
     prepare_qat_pt2e,
     convert_pt2e,
     capture,

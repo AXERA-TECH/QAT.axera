@@ -1,17 +1,17 @@
-"""交叉实验 —— axquant 统一 API 版:同一份 QAT checkpoint 在两个环境各自
+"""交叉实验 —— utils 统一 API 版:同一份 QAT checkpoint 在两个环境各自
 convert+导出,验证「observer 状态 → 量化参数 → 导出 QDQ」计算跨体系等价。
 
 用法(两个环境各跑一次,--checkpoint 指向同一个文件):
   cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. \
-    <env>/bin/python resnet50_2_10/cross_export.py \
-    --checkpoint ./resnet50_2_10/checkpoint/last_checkpoint_2_6.pth
-产物: resnet50_2_10/resnet50_qat_cross_{2_6|2_10}[_sim].onnx
+    <env>/bin/python resnet50/cross_export.py \
+    --checkpoint ./resnet50/checkpoint/last_checkpoint_2_6.pth
+产物: resnet50/resnet50_qat_cross_{2_6|2_10}[_sim].onnx
 """
 import argparse
 
 import torch
 
-from axquant import (
+from utils import (
     IS_TORCH_210,
     AXQuantizer,
     capture,
@@ -23,7 +23,7 @@ from axquant import (
 )
 
 TAG = "2_10" if IS_TORCH_210 else "2_6"  # 仅用于产物文件名
-OUT_DIR = "./resnet50_2_10"
+OUT_DIR = "./resnet50"
 
 
 def main(args):
@@ -55,7 +55,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--config", type=str, default="./resnet50_2_10/config.json")
+    parser.add_argument("--config", type=str, default="./resnet50/config.json")
     parser.add_argument("--num-classes", type=int, default=10, help="须与 checkpoint 训练时一致")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

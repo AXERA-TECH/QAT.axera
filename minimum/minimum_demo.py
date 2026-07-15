@@ -1,40 +1,30 @@
-import re
-import onnx
-import torch  # Version: 2.6.0+cu118
+"""统一 API 版最小示例:同一份代码在 torch 2.6 与 2.10 直接运行,零版本分支。
+
+所有版本差异由 utils 内部消化:
+  - capture():2.6 → export_for_training,2.10 → torch.export.export;
+  - export_float_reference():内置 eval 深拷贝(2.10 不能直接导训练态 BN);
+  - dynamo_export():2.6 → optimize(),2.10 → optimize=False + 函数内联;
+  - per-channel torchlib 映射:import utils 即自动注册。
+
+运行(qat-dev,任一环境):
+  cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
+    <env>/bin/python minimum/minimum_demo.py
+"""
+import torch
 import torch.nn as nn
 
-from torch.ao.quantization.quantizer.xnnpack_quantizer import (
-    XNNPACKQuantizer,
-    get_symmetric_quantization_config,
-)
-from torch.ao.quantization.quantize_pt2e import (
+from utils import (
+    AXQuantizer,
+    capture,
     prepare_qat_pt2e,
     convert_pt2e,
+    dynamo_export,
+    export_float_reference,
+    simplify_and_fix_4bit_dtype,
 )
 
-# from utils.quantizer import (
-#     AXQuantizer,
-#     get_quantization_config,
-# )
-from utils.ax_quantizer import(
-    load_config,
-    AXQuantizer,
-)
-from utils.train_utils import dynamo_export, onnx_simplify
-from utils.quant_utils import simplify_and_fix_4bit_dtype
-import utils.quantized_decomposed_dequantize_per_channel
-
-# Set up warnings
 import warnings
-warnings.filterwarnings(
-    action='ignore',
-    category=DeprecationWarning,
-    module=r'.*'
-)
-warnings.filterwarnings(
-    action='default',
-    module=r'torch.ao.quantization'
-)
+warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
 
 
 class Net(nn.Module):
@@ -52,30 +42,20 @@ class Net(nn.Module):
 
 
 # example inputs
+torch.manual_seed(42)
 input = torch.rand(1, 32, 256, 768).to("cuda")
 
 # float_model
 float_model = Net().to("cuda")
 float_path = "./minimum/minimum_float.onnx"
-dynamo_export(float_model, input, float_path)
+export_float_reference(float_model, input, float_path)
 
 # set quantizer
 quantizer = AXQuantizer("./minimum/config.json")
 
 # export qat model
-exported_model = torch.export.export_for_training(float_model, (input,)).module()
+exported_model = capture(float_model.train(), (input,))
 prepared_model = prepare_qat_pt2e(exported_model, quantizer)
-
-# # train
-# criterion = torch.nn.CrossEntropyLoss()
-# optimizer = torch.optim.SGD(prepared_model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
-# output = prepared_model(input)
-# target = torch.rand(1, 32, 256, 768).to("cuda")  # 随机一个 gt 训一轮
-
-# loss = criterion(output, target)
-# optimizer.zero_grad()
-# loss.backward()
-# optimizer.step()
 
 quantized_model = convert_pt2e(prepared_model)
 

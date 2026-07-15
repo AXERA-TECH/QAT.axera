@@ -134,3 +134,16 @@ env_check 矩阵 + 等价性 harness)。
   **utils_2_10/ 删除(B' 终局达成)**;README_2_10/CONFIG/env_check README
   更新;删除后回归(gen_candidate+checker+minimum 双环境)通过。
   utils/(2.6 原件)保留为上游对照物,已无任何 demo 引用。
+- **R5 ✅**(2026-07-14,用户指示):包更名 axquant → **utils**,与上游目录
+  保持一致;旧 2.6 utils 全部清理(其 WIP fake_data 改动已含于合并实现)。
+  附带收益:合并实现模块名与原 utils 同构,2.6 原版 demo 的
+  `from utils.ax_quantizer import ...` 写法对新 utils 天然兼容(已实测);
+  yolov5 外部补丁改用 qat_utils 拷贝名防与 yolov5 自带 utils 撞名。
+- **R6 ✅**(2026-07-14,用户指示,目录全面对齐上游
+  https://github.com/AXERA-TECH/QAT.axera):原始 resnet50/ 删除,
+  resnet50_2_10 → resnet50(预训练 pth/金标准 onnx/他人 config_4w4f_all
+  已迁入,旧 checkpoint 归档 checkpoint_legacy0623/);全部 *_axquant demo
+  更名为上游原名并删除对应 2.6 原件(train_resnet.py 类定义内联);
+  minimum/yolov5 产物名回归上游;test_clamp 例外(非上游内容,
+  无后缀原件为未跟踪 WIP 未动,统一版保留 _axquant 名)。
+  终态:上游文件名 × 双版本统一内容。
