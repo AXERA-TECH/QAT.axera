@@ -40,9 +40,18 @@ grep 到某个雷点符号 ≠ 它在跑。**先追调用链**:入口脚本(trai
 
 2.10 的 `torch.export` 不再产出 `source_fn_stack`/`nn_module_stack`,
 `get_source_partitions` 随之返回空 → 依赖它们的注解器**不报错、但一个都不注解**,
-量化悄悄消失,精度崩了才发现。
+量化悄悄消失,精度崩了才发现。这里有一个**响亮早炸**和一个**沉默晚炸**:
 
-- **grep**:`source_fn_stack` / `nn_module_stack` / `get_source_partitions`。
+- **先炸(响亮,发生在 prepare 阶段,早于 convert):`gm_using_training_ir`**。
+  conv/convtranspose 注解器里 `from torch._export import gm_using_training_ir`
+  在 2.10 报 `ImportError: cannot import name 'gm_using_training_ir'`(该 helper
+  2.10 已移除)。它把 `using_training_ir` 传给 `get_aten_graph_module_for_pattern`,
+  而后者 2.10 签名也变了。**修法**:删该 import,改用只接
+  `(pattern, example_inputs, is_cuda, gm)` 的 2.10 版
+  `get_aten_graph_module_for_pattern` 包装(2.6 的 `using_training_ir=` 在包装内
+  吸收),见本仓库 utils/_compat.py。grep:`gm_using_training_ir`。
+- **后炸(沉默):`get_source_partitions` 返回空** → 注解器静默 no-op(下详)。
+- **grep**:`gm_using_training_ir` / `source_fn_stack` / `nn_module_stack` / `get_source_partitions`。
 - **修法**:凡活路径上依赖它们的注解器,改写为 **aten 算子直匹配**
   (SubgraphMatcher 或直接遍历 graph 匹配 aten target)。本仓库
   utils/ax_quantizer_utils.py 的 avgpool2d/layernorm/groupnorm/concat 即改写样例;
@@ -54,16 +63,19 @@ grep 到某个雷点符号 ≠ 它在跑。**先追调用链**:入口脚本(trai
   buffer 名(`num_batches_tracked`)识别的版本无关实现(utils/ax_quantizer.py),
   仅复用 BN 场景需要;是否活雷取决于目标模型是否复用 BN 且是否调用它。
 
-### ③ BN patch:2.6 专属的 monkey-patch 大概率失效
+### ③ BN patch:迁 torchao 时必须同步搬家(易漏)
 
 项目常有 `pt2e_bn_patch.py` 一类文件,`patch` 掉
 `torch.ao.quantization.pt2e.export_utils._replace_batchnorm` 保留 BN 超参。
 **它常在 utils/__init__ 里模块级激活(import 即打 patch)**。
 
+- **注意**:原地 2.10(还没迁 torchao 时),`torch.ao.quantization.pt2e.export_utils`
+  **仍在**,patch 照常应用成功——所以它**不是**当前的报错点,容易被忽略。
 - **grep**:`_replace_batchnorm` / `export_utils` / 谁在 `__init__` 里调 patch 函数。
-- **修法**:迁 torchao 后 patch 目标路径变成 `torchao.quantization.pt2e.export_utils`,
-  原 patch 静默失效或报 AttributeError。先判断 torchao 下**是否还需要**这个 patch
-  (torchao 可能已修),需要则把 patch 目标改到 torchao 命名空间;不需要则移除激活。
+- **修法**:一旦 ① 把 PT2E 调用迁到 torchao,BN 折叠走的就是
+  `torchao.quantization.pt2e.export_utils`,而 patch 还盯着 torch.ao 的旧模块 →
+  **静默不生效**(BN 超参又丢了)。迁 ① 时同步判断 torchao 下是否仍需此 patch
+  (可能已修),需要则把 patch 目标改到 torchao 命名空间,不需要则移除激活。
   相关坑:2.10 不能直接导出训练态 BN 模型(buffer 突变报错),float 参考须
   eval 深拷贝导出(utils/train_utils.py::export_float_reference);convert 后
   FP32 区域残留训练态 BN → convert 后补 `move_exported_model_to_eval`。
@@ -97,11 +109,24 @@ grep 到某个雷点符号 ≠ 它在跑。**先追调用链**:入口脚本(trai
 4. 结构体检用 qat-check(checker + 基线对比);跑通后先小批量训 1 epoch 直接
    导出部署到 NPU 验证全链路(见 qat-new-model),再投完整训练。
 
-## 已印证案例
+## 已印证案例(torch 2.10 实测)
 
-QAT.Ultralytics(YOLO11 QAT,克隆在 cache/,已 .gitignore)是本清单的现实印证:
-它 utils 与本仓库迁移前同构,①~④ 的活雷全中(全 torch.ao、ax_quantizer 经
-get_source_partitions 注解、pt2e_bn_patch 模块级激活、导出 optimize());
-其 quantizer.py/quantizer_utils.py/ax_quantizer_lsq.py 为死代码(无活引用),
-按第 0 步甄别可直接跳过。其 requirements 已是 onnx 1.19.1/onnxscript 0.6.2/
-onnx-ir 0.1.15,onnx 生态零迁移成本。
+QAT.Ultralytics(YOLO11 QAT,克隆在 cache/,已 .gitignore)是本清单的现实印证。
+在 torch 2.10 env 跑它的最小 QAT 闭环,实测两处报错(与本清单逐一对应):
+
+- **它真实的 AXQuantizer**:`prepare_qat_pt2e → annotate → _annotate_conv` 即报
+  `ImportError: cannot import name 'gm_using_training_ir' from 'torch._export'`
+  ——**在 prepare 阶段就炸,根本走不到 convert**(对应 ②「先炸」)。
+- **原厂 XNNPACKQuantizer 隔离验证**(绕开其自定义代码):prepare 正常、注解 4 个,
+  `convert_pt2e` 报 `KeyError: 'source_fn_stack'`——**证明是 torch.ao PT2E 内核
+  本身在 2.10 已坏**,非项目代码问题(对应 ①)。torch 2.10 启动时也会打印
+  官方横幅劝迁 torchao。
+- **pt2e_bn_patch** 原地激活成功(export_utils 仍在,对应 ③ 的「原地不报错」)。
+
+甄别结论:其 quantizer.py/quantizer_utils.py/ax_quantizer_lsq.py 为死代码
+(全仓无活引用),按第 0 步可直接跳过;活路径只有 ax_quantizer(config 版)一条。
+其 requirements 已是 onnx 1.19.1/onnxscript 0.6.2/onnx-ir 0.1.15,onnx 生态零迁移。
+
+> 复现脚本(桩掉 ultralytics 重 __init__ 只加载量化内核,避免装整个 YOLO 栈;
+> CPU 即可)不入库,思路见上;要重跑照本节描述在 torch 2.10 env 造一个
+> conv-bn-relu 最小网络即可。
