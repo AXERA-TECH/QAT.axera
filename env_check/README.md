@@ -65,6 +65,33 @@ dynamo_export 里的 onnx.inliner 补丁可保留(functions 为空时是无操�
 导出耗时敏感);或 2.6 老管线继续产出混合 4bit 交付件——届时同样的防御
 抄到 utils/quant_utils.py(2.6 版)即可修复老 bug,历史混合 4bit 产物需重导。
 
+### 待确认:Bias 量化覆盖面(2026-07-15 记录,待与内部后端团队核对)
+
+**现状**(utils/ax_quantizer_utils.py::annotate_bias,双版本一致):
+
+| 算子 | bias 量化? | 说明 |
+|------|-----------|------|
+| conv1d / conv2d | ✅ 默认量化 | DerivedQuantizationSpec:int32、per-channel(ch_axis=0)、对称;scale 派生 = act_scale × weight_scale,zp=0;导出为 int32 initializer + per-channel DQ |
+| Linear / Gemm | ❌ 不量化 | annotate_bias 里 linear 行被注释(上游原样保留) |
+| ConvTranspose | ❌ 不量化 | 不在 annotate_bias 匹配列表内 |
+| reuse_conv 系列 demo | ❌ 显式关闭 | AXQuantizer(..., annotate_bias=False),原 demo 既有选择 |
+
+另:config.json 无 bias 配置通道(get_quantization_config 恒置 None),
+唯一生效路径是 annotate_bias;resnet50 场景实际无量化 bias
+(conv 全 bias=False、fc 为 Linear)——金标准 R6"bias 保持浮点"由此而来。
+
+**待后端团队确认**:
+
+1. bias 是否应**全部**量化(补上 Linear/Gemm 与 ConvTranspose)?
+2. 派生方案(int32、scale=Sa×Sw、per-channel、直接加在累加器上)是否与
+   pulsar2 的累加器语义一致?
+3. reuse_conv 关闭 bias 量化是否合理,还是应统一开启?
+
+**若定案全量化,改动点**:annotate_bias 解除 linear 注释并补
+conv_transpose 匹配(注意 ConvTranspose 权重 per-channel 轴是 1,派生
+spec 的 ch_axis 需对应核对);验证 = checker(R6 对 DQ bias 自动跳过,
+需新增"bias 必须走 DQ"的正向断言)+ 全配置矩阵 + 双环境等价性回归。
+
 ## 2026-07-10:test_clamp 移植补记(P3 完结)
 
 四个 clip/relu6 demo 脚本化移植,2.6 vs 2.10 数值输出逐字符一致(4/4)。

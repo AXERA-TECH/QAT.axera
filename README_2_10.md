@@ -88,5 +88,8 @@ python env_check/check_onnx_structure.py --model xxx_sim.onnx --sim \
 
 1. **simplify 共享 zp 防御**（解锁 optimize=True）：设计定稿于 `env_check/README.md` Backlog 小节；
 2. ImageNet 训练集到位后的绝对精度验收（CIFAR-10 等价性已闭环）;
+2.5 **Bias 量化覆盖面待后端核对**：现状仅 conv1d/2d 默认 int32 派生量化,
+   Linear/ConvTranspose 不量化——是否应全部量化待内部后端团队确认
+   （现状表与改动点见 env_check/README.md「待确认」小节）;
 3. 分支状态：迁移成果在 `torch2.10` 分支（00debca），统一 API 在
    `feat/unified-quant-api` 分支（R1–R4 共 6 个提交）；均**未 push**，推送等用户指令。
