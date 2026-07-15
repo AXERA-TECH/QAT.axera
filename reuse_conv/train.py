@@ -6,7 +6,7 @@
   3. torch.save 取消注释(存 tmp_ax.pth 供 test_2_10.py 使用);
   4. 产物统一写入 reuse_conv/ 目录并带 _2_10 后缀(原版写仓库根目录)。
 备注:本示例的"复用"是运行时循环(module1 每个 forward 被调两次),图内无展开,
-remove_reused_bn_param_hack 与原版一样保持注释(2.10 实现见 axquant/ax_quantizer.py)。
+remove_reused_bn_param_hack 与原版一样保持注释(版本无关实现见 utils/ax_quantizer.py)。
 
 运行(qat-dev):
   cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \

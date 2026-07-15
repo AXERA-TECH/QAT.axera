@@ -1,0 +1,92 @@
+---
+name: qat-new-model
+description: 新模型接入 QAT 全流程——可捕获性预检、算子覆盖面核对、量化 config 编写、QAT 训练、导出与体检。第一次给一个新网络做量化时用这个。
+---
+
+# qat-new-model:新模型接入 QAT
+
+目标产物:QDQ ONNX(`_sim.onnx`,交给 pulsar2)。
+模板:`minimum/minimum_demo.py`(最小骨架,无训练)→ `resnet50/train.py`
+(完整版:数据/训练循环/checkpoint/评测)。跑法见 qat-run,体检见 qat-check。
+
+## 标准流程
+
+```python
+from utils import (AXQuantizer, capture, prepare_qat_pt2e, convert_pt2e,
+                   move_exported_model_to_eval, dynamo_export,
+                   export_float_reference, simplify_and_fix_4bit_dtype)
+
+export_float_reference(float_model, example_input, "float.onnx")   # ① float 参考
+gm = capture(float_model.train(), (example_input,))                # ② 捕获(训练态)
+print(gm.graph)                                                    # ③ 记下节点名 → config
+quantizer = AXQuantizer("config.json")                             # ④
+prepared = prepare_qat_pt2e(gm, quantizer)                         # ⑤
+...QAT 训练循环...                                                  # ⑥ 观察者在训练中校准
+quantized = convert_pt2e(prepared)                                 # ⑦
+move_exported_model_to_eval(quantized)                             # (FP32 区域残留 BN 必需)
+dynamo_export(quantized, example_input, "qat.onnx")                # ⑧
+simplify_and_fix_4bit_dtype("qat.onnx", "qat_sim.onnx")            # ⑨ → pulsar2
+```
+
+- ① 不可跳过:它是数值对齐与结构体检的对照物,且内置 eval 深拷贝
+  (torch 2.10 训练态 BN 模型不能直接导 ONNX);
+- ⑥ 无训练数据时可先喂几个随机 batch 前向(校准观察者)打通全流程再接真数据;
+  训练辅助 `train_one_epoch/evaluate/evaluate_np` 可直接用(resnet50/train.py 示范);
+- 动态 batch/H/W:capture 的 `dynamic_shapes` 原生透传,写法与坑见 qat-run。
+
+## 第 0 步:可捕获性预检
+
+模型必须能过 `torch.export`(数据依赖的控制流、动态列表操作等会失败)——
+先单独跑一句 `capture(model.train(), (ex,))`,报错在这一步解决(改模型写法),
+不要带着捕获问题进量化流程。
+
+## 算子覆盖面核对(新模型最容易踩空的一步)
+
+AXQuantizer 只注解 `AXQuantizer.OPS` 列表内的算子(utils/ax_quantizer.py):
+add / sub / mul / matmul / conv / convtranspose / linear / concat / split /
+avgpool2d / layernorm / groupnorm / silu / gelu / glu / sigmoid / softmax /
+leakyrelu / gridsample。要点:
+
+- **conv/linear 按融合 pattern 注解**:conv[+bn][+relu/relu6/hardtanh] 是一个
+  整体,配置只写核心算子(见 CONFIG.md);
+- **不在列表内的算子静默保持浮点**——不报错。核对办法:数 prepare 后图里的
+  fake_quant/观察者,或导出后用 qat-check 的 checker 看哪些算子两侧没有 Q/DQ;
+- matmul 与 gridsample 有**内置 regional 默认**(S16 对称输入),不写 config
+  也会生效,属有意设计;
+- gru/mha 注解器在 torch 2.10 下不可用(显式 NotImplementedError,防静默漏注解);
+- 新算子要支持:在 utils/ax_quantizer_utils.py 仿照 avgpool2d/layernorm 的
+  **aten 直匹配**写法加注解器并注册进 OPS(2.10 下 get_source_partitions 已废,
+  别参考 gru/mha 的旧写法)。
+
+## 量化 config
+
+格式详档 CONFIG.md:`global_config`(全局 U8/S8)+ `regional_configs`
+(按 `module_type` + 可选 `module_names` 指定区域混合精度 U4/U16/FP32,
+样例见 resnet50/config_4w4f.json 等 5 份)。两条铁律:
+
+1. **module_names 必须在 prepare 之前的捕获图上找**(第③步 print);
+   convert 会折叠重建 conv 并整体改名(conv2d_106 起),convert 后的名字对不上
+   是正常现象。convert 后要定位结构(如切子图)用拓扑序位置索引,参考
+   multi_stage/multi_stage_demo.py::find_stage_cuts;
+2. bias 现状:仅 conv1d/2d 默认派生量化(int32,scale=Sa×Sw),Linear/
+   ConvTranspose 不量化,config 无 bias 通道(现状与待定项见 env_check/README.md)。
+
+## 验收(每个新模型都做)
+
+1. checker:raw 加 `--ort`(数值对齐),sim 用 `--sim`——命令与已知例外解读
+   见 qat-check;首次通过后 `--save-profile` 固化基线,此后改动跑基线对比;
+2. 精度:QAT 后 eval 对 float 基线,掉点异常时先查覆盖面(是不是关键算子
+   没被注解、或该 FP32 的区域被量化);
+3. 交付 pulsar2 的一律是 `_sim.onnx`;含 4bit 的 sim 喂 ORT 报 MaxPool 不接受
+   uint4 属预期,数值对齐在 raw 上做。
+
+## 新模型特有坑
+
+- **多个层复用同一 BatchNorm 模块**:convert 崩时 capture 后先过
+  `remove_reused_bn_param_hack(gm)`(版本无关实现在 utils/ax_quantizer.py;
+  调用点位置见 reuse_conv/train.py 中的注释行);
+- 捕获样例的动态维取值别用 1(0/1 特化;capture 会自动翻倍规避,但样例
+  尽量给 ≥2);
+- 训练/评测切换用 `move_exported_model_to_train/eval`(捕获图不再响应
+  `.train()/.eval()`);
+- checkpoint 跨 torch 2.6/2.10 可互载(state_dict 键名一致,已实测逐 bit 等价)。
