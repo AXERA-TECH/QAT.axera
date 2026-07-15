@@ -34,17 +34,21 @@ simplify_and_fix_4bit_dtype("qat.onnx", "qat_sim.onnx")            # ⑨ → pul
   训练辅助 `train_one_epoch/evaluate/evaluate_np` 可直接用(resnet50/train.py 示范);
 - 动态 batch/H/W:capture 的 `dynamic_shapes` 原生透传,写法与坑见 qat-run。
 
-**⑨ `simplify_and_fix_4bit_dtype` 使用条件**:
+**⑨ 后处理怎么选(`simplify_and_fix_4bit_dtype` vs `onnx_simplify`)**:
 
-- **输入必须是 ⑧ dynamo_export 直出的 raw onnx,且它必须是第一个也是唯一的
-  后处理**。它靠 Q/DQ 节点上的 `pkg.torch.onnx.fx_node` 元数据识别 4bit 张量
-  (torch 侧 4bit 以 uint8/int8 + 收窄 qmin/qmax 表达:U4=0..15、S4=-7..7,
-  导出器写不出原生 4bit,由它改写成 UINT4/INT4)——中途先过任何第三方
-  optimize/slim 会丢元数据或去重共享 zero_point,4bit 标记**静默丢失/污染**
-  (2.6 老管线的 zp 污染 bug 即此成因,见 env_check/README.md);
-- config 不含 4bit 时标记集为空,退化为普通 simplify——**QDQ 量化模型不论
-  配置一律走它**,不要自己另接 onnxslim;
-- float 参考模型(无 Q/DQ)才用 `onnx_simplify`;
+- **config 含 4bit(U4/S4)→ 必须用 `simplify_and_fix_4bit_dtype`**:导出器
+  写不出原生 4bit(torch 侧以 uint8/int8 + 收窄 qmin/qmax 表达:U4=0..15、
+  S4=-7..7),它靠 Q/DQ 节点的 `pkg.torch.onnx.fx_node` 元数据识别并改写成
+  UINT4/INT4。此时输入必须是 ⑧ 直出的 raw,且它是唯一后处理——先过任何
+  第三方 optimize/slim 会丢元数据或去重共享 zero_point,4bit 标记**静默
+  丢失/污染**(2.6 老管线 zp 污染 bug 即此成因,见 env_check/README.md);
+- **含 FP32 混合区域 → 也用它**:FP32 区域会残留 zero-bias 的
+  Expand(CastLike) 链,只有它内置的清理 pass 处理,`onnx_simplify` 不管;
+- **纯 8/16bit 全量化 → `onnx_simplify` 即可**(yolov5_demo/reuse_conv/
+  test_clamp 均此用法);用 `simplify_and_fix_4bit_dtype` 也无害——无 4bit
+  时标记集为空,退化为普通 simplify(minimum/resnet50 即此,两条路径都
+  经过回归验证);
+- float 参考模型(无 Q/DQ)用 `onnx_simplify`;
 - 产出的 4bit sim 只交 pulsar2,不喂 ORT(见"验收"第 3 条)。
 
 ## 第 0 步:可捕获性预检
