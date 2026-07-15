@@ -107,6 +107,14 @@ import 的依赖（全仓 grep 确认），无强版本耦合，取安装时最�
     onnx==1.19.1 onnxscript==0.6.2 onnx-ir==0.1.15 onnxruntime==1.23.2 \
     onnx-graphsurgeon==0.6.1 onnxslim==0.1.94 tqdm pyyaml ipython
   ```
+- **磁盘配额**（/home 为 NFS 配额盘，df 显示卷有空闲但用户配额会先耗尽，git 报
+  No space left）：优先清理**可再生**产物——`resnet50/resnet50_float_*.onnx`
+  （每个 130MB）、`resnet50/checkpoint/checkpoint_*_0.pth` 与带配置后缀的
+  last_checkpoint、cross/opt onnx、`reuse_conv/resnet50*.pth|*.onnx`、
+  `env_check/out/`、`__pycache__`。**必须保留**：`resnet50_pretrained_float.pth`、
+  金标准 `resnet50_qat[_sim].onnx`、`last_checkpoint_2_6/2_10.pth`
+  （等价性与 multi_stage 依赖）、`*.eq50bak.pth`、`reuse_conv/input_ax.npy|gt_ax.npy`
+  （回归锚点）、`dataset/`。
 - 验证脚本已归档到仓库 `env_check/`：`qax_smoke.py`（版本/CUDA/torch.ao 路径）、
   `qax_probe.py`（三种 export 入口对照）、`qax_probe2.py`（torchao vs torch.ao quantizer）、
   `qax_smoke2.py`（导出 + ORT 对齐）。
