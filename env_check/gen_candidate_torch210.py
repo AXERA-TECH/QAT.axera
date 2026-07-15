@@ -1,9 +1,8 @@
-"""生成 torch2.10 候选 QDQ 导出(utils_2_10 管线),供 check_onnx_structure.py 检查。
+"""生成 QDQ 候选导出(axquant 统一 API 版),供 check_onnx_structure.py 检查。
 
-P0 验收脚本:AXQuantizer(minimum/config.json, U8 激活非对称 + S8 权重 per-channel 对称)
-→ torchao prepare_qat_pt2e → 短训 → convert_pt2e → utils_2_10.dynamo_export(optimize=False)
-→ utils_2_10.simplify_and_fix_4bit_dtype。
-带注解计数断言,防 torch2.10 下注解器静默漏注解。
+历史:P0 时代本脚本用 utils_2_10 直连;R4 起收敛到 axquant(同一份代码
+torch2.6/2.10 均可运行,文件名保留 torch210 以延续文档引用)。
+带注解计数断言,防注解器静默漏注解。
 
 产出:
   env_check/out/tiny_qat_torch210.onnx        raw 导出(dynamo, opset 21, 权重 DQ 保留)
@@ -19,13 +18,15 @@ sys.path.insert(0, REPO_ROOT)
 
 import torch
 
-import utils_2_10.quantized_decomposed_dequantize_per_channel  # noqa: F401 dequant per-channel 的 torchlib 映射
-from utils_2_10.ax_quantizer import AXQuantizer
-from utils_2_10.train_utils import dynamo_export
-from utils_2_10.quant_utils import simplify_and_fix_4bit_dtype
-
-from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
-from torchao.quantization.pt2e import move_exported_model_to_eval
+from axquant import (
+    AXQuantizer,
+    capture,
+    prepare_qat_pt2e,
+    convert_pt2e,
+    move_exported_model_to_eval,
+    dynamo_export,
+    simplify_and_fix_4bit_dtype,
+)
 
 
 class TinyNet(torch.nn.Module):
@@ -64,7 +65,7 @@ def main():
 
     quantizer = AXQuantizer(os.path.join(REPO_ROOT, "minimum", "config.json"))
 
-    exported_model = torch.export.export(float_model, example_inputs).module()
+    exported_model = capture(float_model, example_inputs)
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
     # 防静默漏注解:conv1 单元 / conv2 单元 / add / fc 至少各引入观察点,

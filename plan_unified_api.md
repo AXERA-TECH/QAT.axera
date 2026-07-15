@@ -120,3 +120,17 @@ _2_10 产物结构一致。
 
 **新增约束**：merged 实现的任何改动,双环境回归为必选项(安全网 =
 env_check 矩阵 + 等价性 harness)。
+
+## 九、执行记录
+
+- **R1 ✅**(b197375):axquant 包 9 文件;minimum 单文件双环境跑通,
+  2.6 raw 13/13、sim vs sim 17/17;
+- **R2 ✅**(c006f36):resnet50 三脚本收敛;双环境矩阵+CIFAR 冒烟,
+  eval 与重构前逐数字一致(56.562/96.250 与 53.750/93.281);
+- **R3 ✅**(1b200aa):12 个统一 demo(_axquant)落地,13 个 *_2_10.py 删除;
+  2.10 全量 12 项 + 2.6 抽查 5 项通过(2 个失败裁定为 fixture 并发竞态,
+  串行重跑干净通过);
+- **R4 ✅**(2026-07-14):env_check/gen_candidate 收敛 axquant;
+  **utils_2_10/ 删除(B' 终局达成)**;README_2_10/CONFIG/env_check README
+  更新;删除后回归(gen_candidate+checker+minimum 双环境)通过。
+  utils/(2.6 原件)保留为上游对照物,已无任何 demo 引用。

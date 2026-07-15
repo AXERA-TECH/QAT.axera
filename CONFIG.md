@@ -631,10 +631,11 @@ graph():
 
 ## torch 2.10 补充(2026-07-10,详见 plan_torch210.md / env.md)
 
-上文工作流在 torch 2.10 下的变化与不变:
+上文工作流在 torch 2.10 下的变化与不变(2026-07-14 起建议直接用 axquant 统一 API,
+`from axquant import capture` 自动处理版本差异与动态 batch):
 
 **变**:图捕获入口 `export_for_training` 已废弃,改用 `torch.export.export`
-(训练场景还需动态 batch,见 resnet50_2_10/train.py 的 capture()):
+(训练场景还需动态 batch,封装见 axquant/capture.py):
 
 ```
 exported_model = torch.export.export(float_model.train(), example_inputs).module()
@@ -651,6 +652,6 @@ convert 之后的图与配置里的 module_names 对不上属正常现象,不要
 如需在 convert 后的图上定位结构(例如切子图),用拓扑序位置索引,参考
 multi_stage/multi_stage_demo_2_10.py 的 find_stage_cuts()。
 
-regional 混合精度(U16/U4/FP32 区域)在 2.10 管线(utils_2_10)下已全配置
+regional 混合精度(U16/U4/FP32 区域)在 2.10 管线(现 axquant 统一 API)下已全配置
 复测通过;历史 2.6 管线产出的"混合 4bit"模型存在 zp 共享污染 bug,不要作为
 金标准对照(详见 env_check/README.md)。

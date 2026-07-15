@@ -6,7 +6,7 @@
 |------|------|
 | `qax_smoke.py` / `qax_probe*.py` / `qax_smoke2.py` | 环境冒烟与 PT2E API 对照实验(见 ../env.md) |
 | `check_onnx_structure.py` | **QAT 导出 ONNX 结构检查器**(规则 R1~R9 + profile + 基线对比) |
-| `gen_candidate_torch210.py` | **P0 验收脚本**:utils_2_10.AXQuantizer 全链路(注解计数断言→QAT→导出→simplify) |
+| `gen_candidate_torch210.py` | 验收脚本(R4 起 axquant 统一 API):AXQuantizer 全链路(注解计数断言→QAT→导出→simplify),双环境可跑 |
 | `baselines/resnet50_qat.profile.json` | 金标准结构基线(torch2.6 管线 raw 导出,S8 权重/U8 激活) |
 | `baselines/resnet50_qat_sim.profile.json` | 金标准结构基线(simplify 后,4w4f 流:S4 权重/U4 激活) |
 | `baselines/minimum_qat.profile.json` | minimum demo 金标准(torch2.6 env 实跑原版 demo 生成,raw) |

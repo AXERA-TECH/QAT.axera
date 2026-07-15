@@ -1,6 +1,7 @@
-"""axquant —— QAT.axera 的统一量化 API(torch 2.6 / 2.10 双版本,单一入口)。
+"""axquant —— QAT.axera 的统一量化 API(torch 2.6 / 2.10 双版本,单一入口,
+唯一的合并实现层)。
 
-用法(用户代码零版本分支,零 utils/utils_2_10 字样):
+用法(用户代码零版本分支):
 
     from axquant import (
         AXQuantizer, capture, prepare_qat_pt2e, convert_pt2e,
