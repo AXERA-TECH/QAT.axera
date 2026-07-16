@@ -3,6 +3,22 @@
 axera QAT demo
 包含一个最小导出 demo 和一个 resnet50 训练 demo
 
+## torch 2.10 支持
+
+量化 `utils` 已支持 **torch 2.6 / 2.10 双版本**——同一份代码两个版本都能跑,零版本分支
+(版本差异收敛在 `utils/_compat.py` 内部)。
+
+**torch 2.10 用户请先看 [README_2_10.md](README_2_10.md)**,内含:
+
+- **环境安装**:两步装法(PyTorch 栈走官方源定 CUDA + 其余走镜像),清单 `requirements_2_10.txt`;
+- **快速开始**:最小示例 / resnet50 / 导出结构体检的命令;
+- **2.6 → 2.10 必知差异(8 条)**:PT2E 必须走 torchao、图捕获换 `torch.export.export`、
+  导出必须 `optimize=False`、训练态 BN 不能直接导、export 元数据换代、QDQ 格式与
+  `ir_version` 回写、convert 后 conv 折叠重命名等;
+- **已知事项与告警**:2.6 老管线混合 4bit 不可作金标准、bias 量化覆盖面、4bit sim 与 ORT。
+
+torch 2.6 用户按下文原有流程即可(依赖见 `requirements.txt`)。
+
 ## minimum export demo
 
 ```bash
