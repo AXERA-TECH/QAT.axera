@@ -629,7 +629,7 @@ graph():
 
 ---
 
-## torch 2.10 补充(2026-07-10,详见 plan_torch210.md / env.md)
+## torch 2.10 补充(2026-07-10,详见 env.md)
 
 上文工作流在 torch 2.10 下的变化与不变(2026-07-14 起建议直接用统一 API,
 `from utils import capture` 自动处理版本差异,动态形状以 torch 原生 dynamic_shapes 传入):

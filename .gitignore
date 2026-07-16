@@ -5,3 +5,6 @@ dataset
 *.pth
 *.npy
 outputs-4w8f
+
+# 外部参照项目克隆区(不纳入本仓库)
+cache/

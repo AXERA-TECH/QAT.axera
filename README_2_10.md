@@ -3,8 +3,7 @@
 > 状态：**迁移 P0–P4 + 统一 API R1–R6 全部完成**（2026-07-07 ~ 07-14）。
 > 目录结构已与上游 https://github.com/AXERA-TECH/QAT.axera 对齐:文件名与上游一致,
 > 内容为双版本统一实现(torch 2.6/2.10 同一份代码);历史 2.6 原件与 *_2_10/*_axquant 过渡命名均已退役。
-> 详档：迁移知识库 `plan_torch210.md` · 环境依据 `env.md` · 验证记录与工具 `env_check/README.md`
-> · **统一 API 规划与执行记录 `plan_unified_api.md`**。
+> 详档：环境依据 `env.md` · 验证记录与工具 `env_check/README.md`。
 >
 > **2026-07-14 起,公共入口统一为 `utils` 包**(与上游目录同名;`from utils import AXQuantizer, capture, ...`,
 > torch 2.6/2.10 同一份代码,零版本分支;实现层几经演进:utils_2_10 → axquant → 更名 utils,旧 2.6 utils 与 utils_2_10 均已清理)。
@@ -53,9 +52,9 @@ python env_check/check_onnx_structure.py --model xxx_sim.onnx --sim \
 | `test_clamp/*_demo_axquant.py` | 统一版(该目录非上游内容;无后缀原件为本机未跟踪 WIP,未动) |
 | `.claude/skills/` | Claude Code 项目技能:qat-new-model(新模型接入全流程)/qat-run(跑训练与 demo)/qat-check(结构体检)/qat-migrate-2_10(老项目 2.6→2.10 迁移排雷) |
 | `requirements.txt` / `requirements_2_10.txt` | 2.6 基线 / 2.10 环境(见 env.md) |
-| `env.md` / `plan_torch210.md` / `plan_unified_api.md` / `env_check/` | 迁移与统一 API 的文档、验证工具、金标准基线 |
+| `env.md` / `env_check/` | 迁移与统一 API 的文档、验证工具、金标准基线 |
 
-## 四、2.6 → 2.10 必知差异（速查,详见 plan_torch210.md）
+## 四、2.6 → 2.10 必知差异（速查）
 
 1. **PT2E 必须走 torchao**：torch.ao 的 `convert_pt2e` 在 2.10 已坏（`KeyError: 'source_fn_stack'`）；
    且 torch.ao 与 torchao 的 QuantizationSpec 类型不互通，量化器需整体换命名空间（统一 utils 已完成）。
