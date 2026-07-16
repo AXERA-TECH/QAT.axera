@@ -1,5 +1,5 @@
 # torch 2.10 环境依赖(双轨:requirements.txt 保留为 torch 2.6 基线)
-# 版本选型依据与验证记录见 env.md;结构检查工具见 env_check/README.md
+# 结构检查工具见 env_check/README.md;版本选型依据归档于内部环境文档
 # ⚠️ 内网机器直连 PyPI 会挂死,安装需走清华源:
 #   pip install -r requirements_2_10.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 #
@@ -10,7 +10,7 @@
 #       pip install -r requirements_2_10.txt \
 #         --index-url https://download.pytorch.org/whl/cu126 \
 #         --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple
-# 本机实测环境为 +cu126 构建(见 env.md),但依赖规格不强制该构建。
+# 本机实测环境为 +cu126 构建,但依赖规格不强制该构建。
 
 # --- PyTorch 栈(CUDA 构建由 index-url 决定,不在此绑定 cuXXX) ---
 torch==2.10.0

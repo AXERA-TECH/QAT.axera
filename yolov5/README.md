@@ -15,7 +15,7 @@ https://github.com/ultralytics/yolov5/tree/master 检出目录用的**参考补�
    ```
 3. 注释掉 yolov5 的这一行（AMP 检查干扰 QAT）：
    https://github.com/ultralytics/yolov5/blob/master/models/common.py#L337
-4. 环境：torch 2.10 按 QAT.axera 的 `env.md` / `requirements_2_10.txt` 配置，
+4. 环境：torch 2.10 按 QAT.axera 的 `requirements_2_10.txt` 配置，
    torch 2.6 按 `requirements.txt`——补丁经统一 API（`from qat_utils import ...`）
    双版本同一份代码；
 5. 执行：

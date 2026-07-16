@@ -7,7 +7,7 @@ description: 跑 QAT 训练与 demo(resnet50/minimum/multi_stage/reuse_conv/test
 
 前置:工作目录为仓库根目录;当前 Python 环境满足 `requirements_2_10.txt`
 (torch 2.10)或 `requirements.txt`(torch 2.6)——版本路由自动完成,同一份
-脚本双版本可跑。环境问题见 `env.md`。
+脚本双版本可跑;依赖清单见 requirements_2_10.txt / requirements.txt。
 
 ```bash
 PYTHONPATH=. [CUDA_VISIBLE_DEVICES=<卡号>] python -u <script> [args]
@@ -49,4 +49,4 @@ gm = capture(m, ex, dynamic_shapes=({0: Dim("batch", min=1, max=256), 2: 32*_h, 
 2. **共享产物的 demo 不要并行跑多份**(reuse_conv 的 checkpoint/fixture 会互踩);
 3. fake 数据时 `fake_train_size`(默认 1024)须 > steps×batch,否则数据提前耗尽;
 4. 产物(float 参考 onnx、epoch checkpoint)体积可观,批量实验后及时清理
-   可再生文件(清单见 env.md「磁盘配额」)。
+   可再生文件(float 参考 onnx、epoch/配置后缀 checkpoint、cross/opt onnx 等,批量实验后及时清理)。

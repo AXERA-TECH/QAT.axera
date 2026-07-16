@@ -8,7 +8,7 @@
 
 | 文件 | 作用 |
 |------|------|
-| `qax_smoke.py` / `qax_probe*.py` / `qax_smoke2.py` | 环境冒烟与 PT2E API 对照实验(见 ../env.md) |
+| `qax_smoke.py` / `qax_probe*.py` / `qax_smoke2.py` | 环境冒烟与 PT2E API 对照实验 |
 | `check_onnx_structure.py` | **QAT 导出 ONNX 结构检查器**(规则 R1~R9 + profile + 基线对比) |
 | `gen_candidate_torch210.py` | 验收脚本(统一 utils API):AXQuantizer 全链路(注解计数断言→QAT→导出→simplify),双环境可跑 |
 | `baselines/resnet50_qat.profile.json` | 金标准结构基线(torch2.6 管线 raw 导出,S8 权重/U8 激活) |
@@ -212,7 +212,7 @@ int32 per-channel bias DQ(annotate_bias 语义保留)。
 对象:`resnet50_2_10/resnet50_qat_{2_6,2_10}_sim.onnx`(等价性运行产物,
 同 config.json/seed/数据,各自独立训 50 步)。
 环境:2.6 侧 = envs/torch2.6(torch 2.6.0+cu124,onnx 1.17.0,onnxscript 0.4.0,
-onnxslim 0.1.48);2.10 侧 = envs/torch2.10(见 env.md)。
+onnxslim 0.1.48);2.10 侧 = envs/torch2.10。
 
 **结构完全一致**:
 

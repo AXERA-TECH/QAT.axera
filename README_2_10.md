@@ -4,7 +4,7 @@
 > 零版本分支,版本差异收敛在 `utils/_compat.py` 内部。
 > 公共入口:`from utils import AXQuantizer, capture, prepare_qat_pt2e, convert_pt2e, ...`
 > (与上游目录同名;上游写法 `from utils.ax_quantizer import ...` 亦兼容)。
-> 环境版本与选型依据见 `env.md`;结构检查工具见 `env_check/README.md`。
+> 结构检查工具见 `env_check/README.md`。
 
 ## 一、快速开始
 
@@ -59,7 +59,6 @@ skill `qat-run`;第一次给新模型做量化见 skill `qat-new-model`。
 | `env_check/` | 结构检查器 `check_onnx_structure.py` + 金标准基线 `baselines/` + 说明 |
 | `.claude/skills/` | 项目技能:qat-new-model(新模型接入)/ qat-run(跑训练与 demo)/ qat-check(结构体检)/ qat-migrate-2_10(把 torch.ao PT2E 项目迁 2.10) |
 | `requirements_2_10.txt` / `requirements.txt` | torch 2.10 / 2.6 依赖 |
-| `env.md` | 环境版本与选型依据 |
 
 ## 三、2.6 → 2.10 必知差异(速查)
 
@@ -93,7 +92,7 @@ skill `qat-run`;第一次给新模型做量化见 skill `qat-new-model`。
   Linear / ConvTranspose 不量化,config 无 bias 通道——是否应全部量化以内部后端团队核对为准。
 - checker R4b 对 FP32 区域 conv(共享上游 DQ、权重故意不量化)会两侧**对称误报**,属已知例外。
 - 4bit sim 模型 ORT 不能跑(MaxPool 不接受 uint4,金标准同款行为)——数值对齐在 raw 上做。
-- 环境 onnxscript 定向升 0.6.2(optimize 折叠修复,本项目提报)、onnx-ir 约束 `<0.1.16`,详见 env.md。
+- 环境 onnxscript 定向升 0.6.2(optimize 折叠修复,本项目提报)、onnx-ir 约束 `<0.1.16`。
 
 ## 五、相关
 
