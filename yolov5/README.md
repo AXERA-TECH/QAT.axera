@@ -28,5 +28,5 @@ https://github.com/ultralytics/yolov5/tree/master 检出目录用的**参考补�
 - QAT 相关改动集中在 train.py 的量化器构造、`capture()` 图捕获
   （batch 维已按 torch.export 原生 `dynamic_shapes` 声明动态，改 batch-size
   无需动代码）与 `convert_pt2e` 导出段，可全文搜索 `qat_utils` 定位；
-- 导出产物的结构体检可拷回 QAT.axera 用 `env_check/check_onnx_structure.py`
-  （用法与已知例外见 `env_check/README.md`）。
+- 导出产物的结构体检可拷回 QAT.axera 用 `utils/check_onnx_structure.py`
+  （用法与已知例外见 `README_2_10.md` 与 qat-check skill）。

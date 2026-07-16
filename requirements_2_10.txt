@@ -1,5 +1,5 @@
 # torch 2.10 环境依赖(双轨:requirements.txt 保留为 torch 2.6 基线)
-# 结构检查工具见 env_check/README.md;版本选型依据归档于内部环境文档
+# 结构检查工具:utils/check_onnx_structure.py;版本选型依据归档于内部环境文档
 # ⚠️ 内网机器直连 PyPI 会挂死,安装需走清华源:
 #   pip install -r requirements_2_10.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 #

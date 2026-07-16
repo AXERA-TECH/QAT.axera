@@ -18,11 +18,11 @@ torch2.6 老管线的金标准导出(resnet50/resnet50_qat*.onnx)与 pulsar2/uti
       (namespace / pkg.torch.onnx.fx_node,simplify_and_fix_4bit_dtype 依赖它识别 4bit)
 
 用法:
-  python env_check/check_onnx_structure.py --model m.onnx                    # 规则检查 + profile
-  python env_check/check_onnx_structure.py --model m.onnx --sim              # 按 simplify 后模型检查(跳过 R9)
-  python env_check/check_onnx_structure.py --model m.onnx --save-profile p.json
-  python env_check/check_onnx_structure.py --model m.onnx --baseline p.json  # 与基线 profile 结构对比
-  python env_check/check_onnx_structure.py --model m.onnx --ort              # 附带 ORT 加载 + 随机推理
+  python utils/check_onnx_structure.py --model m.onnx                    # 规则检查 + profile
+  python utils/check_onnx_structure.py --model m.onnx --sim              # 按 simplify 后模型检查(跳过 R9)
+  python utils/check_onnx_structure.py --model m.onnx --save-profile p.json
+  python utils/check_onnx_structure.py --model m.onnx --baseline p.json  # 与基线 profile 结构对比
+  python utils/check_onnx_structure.py --model m.onnx --ort              # 附带 ORT 加载 + 随机推理
 """
 import argparse
 import json

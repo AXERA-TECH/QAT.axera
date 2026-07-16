@@ -5,20 +5,19 @@ description: QAT 导出 ONNX 结构体检——13 条规则检查器、金标准
 
 # qat-check:导出结构体检
 
-工具在 `env_check/`(详档 env_check/README.md)。FAIL 时退出码非 0,可接 CI。
+工具:`utils/check_onnx_structure.py`(通用);金标准基线随各示例存放。FAIL 时退出码非 0,可接 CI。
 前置:工作目录为仓库根目录,环境满足 requirements_2_10.txt 或 requirements.txt。
 
 ```bash
-python env_check/check_onnx_structure.py --model <raw>.onnx --ort           # raw 规则(R1~R9)
-python env_check/check_onnx_structure.py --model <sim>.onnx --sim           # sim 规则(跳 R9,Cast 升 FAIL)
-python env_check/check_onnx_structure.py --model <sim>.onnx --sim \
-   --baseline env_check/baselines/<x>.profile.json                          # 与基线逐项对比(同网络才有意义)
-python env_check/check_onnx_structure.py --model <m>.onnx --save-profile p.json  # 固化新基线
-python env_check/cmp_sim_matrix.py                                          # resnet50 全配置 2.6vs2.10 总表
+python utils/check_onnx_structure.py --model <raw>.onnx --ort           # raw 规则(R1~R9)
+python utils/check_onnx_structure.py --model <sim>.onnx --sim           # sim 规则(跳 R9,Cast 升 FAIL)
+python utils/check_onnx_structure.py --model <sim>.onnx --sim \
+   --baseline <示例目录>/<x>.profile.json                          # 与基线逐项对比(同网络才有意义)
+python utils/check_onnx_structure.py --model <m>.onnx --save-profile p.json  # 固化新基线
 ```
 
-基线:`resnet50_qat[_sim].profile.json`(金标准,sim 为 4w4f 流 S4/U4)、
-`minimum_qat[_sim].profile.json`。
+基线:`resnet50/resnet50_qat[_sim].profile.json`(金标准,sim 为 4w4f 流 S4/U4)、
+`minimum/minimum_qat[_sim].profile.json`。
 
 ## 结果解读(已知例外,勿误判)
 

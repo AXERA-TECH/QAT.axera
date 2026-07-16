@@ -47,7 +47,7 @@ else:  # 纯 8/16bit 全量化
   S4=-7..7),它靠 Q/DQ 节点的 `pkg.torch.onnx.fx_node` 元数据识别并改写成
   UINT4/INT4。此时输入必须是 ⑧ 直出的 raw,且它是唯一后处理——先过任何
   第三方 optimize/slim 会丢元数据或去重共享 zero_point,4bit 标记**静默
-  丢失/污染**(2.6 老管线 zp 污染 bug 即此成因,见 env_check/README.md);
+  丢失/污染**(2.6 老管线 zp 污染 bug 即此成因,见 README_2_10.md 告警);
 - **含 FP32 混合区域 → 也用它**:FP32 区域会残留 zero-bias 的
   Expand(CastLike) 链,只有它内置的清理 pass 处理,`onnx_simplify` 不管;
 - **纯 8/16bit 全量化 → `onnx_simplify` 即可**(yolov5_demo/reuse_conv/
@@ -96,7 +96,7 @@ leakyrelu / gridsample。要点:
    是正常现象。convert 后要定位结构(如切子图)用拓扑序位置索引,参考
    multi_stage/multi_stage_demo.py::find_stage_cuts;
 2. bias 现状:仅 conv1d/2d 默认派生量化(int32,scale=Sa×Sw),Linear/
-   ConvTranspose 不量化,config 无 bias 通道(现状与待定项见 env_check/README.md)。
+   ConvTranspose 不量化,config 无 bias 通道(现状与待定项见 README_2_10.md 告警)。
 
 ## 先打通链路,再投入训练(强烈建议)
 

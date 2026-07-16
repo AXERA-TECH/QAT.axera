@@ -4,7 +4,7 @@
 > 零版本分支,版本差异收敛在 `utils/_compat.py` 内部。
 > 公共入口:`from utils import AXQuantizer, capture, prepare_qat_pt2e, convert_pt2e, ...`
 > (与上游目录同名;上游写法 `from utils.ax_quantizer import ...` 亦兼容)。
-> 结构检查工具见 `env_check/README.md`。
+> 导出结构检查器:`utils/check_onnx_structure.py`(用法见下)。
 
 ## 一、快速开始
 
@@ -39,9 +39,9 @@ PYTHONPATH=. python minimum/minimum_demo.py
 PYTHONPATH=. python resnet50/train.py --data cifar10 --steps 50 --seed 42
 
 # 导出结构体检(13 条规则 + 金标准基线对比;FAIL 时退出码非 0,可接 CI)
-python env_check/check_onnx_structure.py --model <raw>.onnx --ort
-python env_check/check_onnx_structure.py --model <sim>.onnx --sim \
-  --baseline env_check/baselines/resnet50_qat_sim.profile.json
+python utils/check_onnx_structure.py --model <raw>.onnx --ort
+python utils/check_onnx_structure.py --model <sim>.onnx --sim \
+  --baseline resnet50/resnet50_qat_sim.profile.json
 ```
 
 多卡机器用 `CUDA_VISIBLE_DEVICES=<空卡>` 挑卡。更多入口、动态 shape 写法与防坑清单见
@@ -56,7 +56,6 @@ skill `qat-run`;第一次给新模型做量化见 skill `qat-new-model`。
 | `resnet50/` | train / test / cross_export + 5 份量化配置 + 预训练 pth + 金标准 onnx(产物带 `_2_6/_2_10` 标签,用于双环境等价性对照) |
 | `multi_stage/`、`reuse_conv/`、`yolov5/` | 其余示例 demo |
 | `test_clamp/` | clamp / relu6 数值对照 demo(CPU 即可) |
-| `env_check/` | 结构检查器 `check_onnx_structure.py` + 金标准基线 `baselines/` + 说明 |
 | `.claude/skills/` | 项目技能:qat-new-model(新模型接入)/ qat-run(跑训练与 demo)/ qat-check(结构体检)/ qat-migrate-2_10(把 torch.ao PT2E 项目迁 2.10) |
 | `requirements_2_10.txt` / `requirements.txt` | torch 2.10 / 2.6 依赖 |
 

@@ -654,4 +654,4 @@ multi_stage/multi_stage_demo.py 的 find_stage_cuts()。
 
 regional 混合精度(U16/U4/FP32 区域)在 2.10 管线(现统一 utils API)下已全配置
 复测通过;历史 2.6 管线产出的"混合 4bit"模型存在 zp 共享污染 bug,不要作为
-金标准对照(详见 env_check/README.md)。
+金标准对照。
