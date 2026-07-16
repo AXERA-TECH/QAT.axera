@@ -1,6 +1,6 @@
 ---
 name: qat-run
-description: 跑 QAT 训练与 demo(resnet50/minimum/multi_stage/reuse_conv/test_clamp)。统一 utils API,torch 2.6/2.10 同一份代码。要训练、跑示例、复现结果时用这个。
+description: 跑 QAT 训练与 demo(resnet50/minimum/multi_stage/reuse_conv)。统一 utils API,torch 2.6/2.10 同一份代码。要训练、跑示例、复现结果时用这个。
 ---
 
 # qat-run:跑 QAT 训练与 demo
@@ -24,7 +24,6 @@ PYTHONPATH=. [CUDA_VISIBLE_DEVICES=<卡号>] python -u <script> [args]
 | `minimum/minimum_demo.py`、`minimum/yolov5_demo.py` | 最小示例(conv-bn-relu / 多输入 grid_sample) |
 | `multi_stage/multi_stage_demo.py`、`multi_stage_contrast_demo.py` | 切子图分段推理(依赖 `resnet50/checkpoint/last_checkpoint_2_10.pth`,cifar 10 类头) |
 | `reuse_conv/train.py→test.py`、`train_resnet.py→test_resnet.py` | 复用 BN 场景(test 首跑生成 fixture,二跑逐 bit 回归) |
-| `test_clamp/*_demo_axquant.py` | clamp/relu6 数值对照(CPU 即可) |
 
 量化配置(`resnet50/`):`config.json`=U8/S8;`config_4w4f_all`=全局 4bit;
 `config_4w4f`/`config_16f`/`config_fp32`=U4/U16/FP32 混合 regional。

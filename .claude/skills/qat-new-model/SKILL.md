@@ -50,8 +50,8 @@ else:  # 纯 8/16bit 全量化
   丢失/污染**(2.6 老管线 zp 污染 bug 即此成因,见 README_2_10.md 告警);
 - **含 FP32 混合区域 → 也用它**:FP32 区域会残留 zero-bias 的
   Expand(CastLike) 链,只有它内置的清理 pass 处理,`onnx_simplify` 不管;
-- **纯 8/16bit 全量化 → `onnx_simplify` 即可**(yolov5_demo/reuse_conv/
-  test_clamp 均此用法);用 `simplify_and_fix_4bit_dtype` 也无害——无 4bit
+- **纯 8/16bit 全量化 → `onnx_simplify` 即可**(yolov5_demo/reuse_conv
+  均此用法);用 `simplify_and_fix_4bit_dtype` 也无害——无 4bit
   时标记集为空,退化为普通 simplify(minimum/resnet50 即此,两条路径都
   经过回归验证);
 - float 参考模型(无 Q/DQ)用 `onnx_simplify`;

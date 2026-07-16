@@ -55,7 +55,6 @@ skill `qat-run`;第一次给新模型做量化见 skill `qat-new-model`。
 | `minimum/`(minimum_demo.py、yolov5_demo.py) | 最小示例(conv-bn-relu / 多输入 grid_sample) |
 | `resnet50/` | train / test / cross_export + 5 份量化配置 + 预训练 pth + 金标准 onnx(产物带 `_2_6/_2_10` 标签,用于双环境等价性对照) |
 | `multi_stage/`、`reuse_conv/`、`yolov5/` | 其余示例 demo |
-| `test_clamp/` | clamp / relu6 数值对照 demo(CPU 即可) |
 | `.claude/skills/` | 项目技能:qat-new-model(新模型接入)/ qat-run(跑训练与 demo)/ qat-check(结构体检)/ qat-migrate-2_10(把 torch.ao PT2E 项目迁 2.10) |
 | `requirements_2_10.txt` / `requirements.txt` | torch 2.10 / 2.6 依赖 |
 
