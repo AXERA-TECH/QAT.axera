@@ -10,20 +10,22 @@
 
 ### 安装依赖
 
-torch 2.10 用 `requirements_2_10.txt`(torch 2.6 基线用 `requirements.txt`)。
-内网机器直连 PyPI 会挂死,安装走清华源:
+torch 2.10 依赖清单为 `requirements_2_10.txt`(torch 2.6 基线用 `requirements.txt`)。
+**分两步装**:PyTorch 栈从官方源取(带 CUDA 构建),其余(ONNX 生态等)走清华源
+——不能整份 `-i 清华源` 一把梭,那样 torch 会从清华 PyPI 镜像拉到非验证的构建;
+内网直连默认 PyPI 又会挂死。
 
 ```bash
+# 1) PyTorch 栈:官方源装,选对应 CUDA(本项目验证用 cu126)
+pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 torchao==0.16.0 \
+  --index-url https://download.pytorch.org/whl/cu126
+
+# 2) 其余依赖:清华源(第 1 步已装的 torch 栈会自动跳过)
 pip install -r requirements_2_10.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-requirements 只钉版本号、不绑定 CUDA 构建。需要指定 CUDA(如 cu126)时,加 PyTorch 官方源:
-
-```bash
-pip install -r requirements_2_10.txt \
-  --index-url https://download.pytorch.org/whl/cu126 \
-  --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple
-```
+requirements 里 torch 栈不绑定 `+cuXXX`,CUDA 由第 1 步的 `--index-url` 决定
+(其它 CUDA 把 `cu126` 换成 `cu124` / `cpu` 等)。
 
 ### 跑示例
 
