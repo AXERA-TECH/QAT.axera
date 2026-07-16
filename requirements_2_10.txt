@@ -16,7 +16,7 @@
 torch==2.10.0
 torchvision==0.25.0
 torchaudio==2.10.0
-# torch 2.10 中 torch.ao 的 PT2E QAT 已坏,必须走 torchao(见 plan_torch210.md 改动 1)
+# torch 2.10 中 torch.ao 的 PT2E QAT 已坏,必须走 torchao(见 README_2_10.md 必知差异①)
 torchao==0.16.0
 
 # --- ONNX 生态 ---

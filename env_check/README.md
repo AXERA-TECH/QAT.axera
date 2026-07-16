@@ -114,13 +114,13 @@ Cast×54 未折叠)vs 2.6 raw 330 节点(导出时 optimize() 已清理)。清�
 ## 检查器用法
 
 ```bash
-P=/home/heqi/miniforge3/envs/torch2.10/bin/python
+# 仓库根目录、满足 requirements_2_10.txt 的环境下执行
 # 规则检查(raw 导出)
-$P env_check/check_onnx_structure.py --model xxx.onnx --ort
+python env_check/check_onnx_structure.py --model xxx.onnx --ort
 # simplify 后的模型(跳过 metadata 规则,Cast 从 WARN 升 FAIL)
-$P env_check/check_onnx_structure.py --model xxx_sim.onnx --sim
+python env_check/check_onnx_structure.py --model xxx_sim.onnx --sim
 # 与金标准基线做结构对比(同网络才有意义)
-$P env_check/check_onnx_structure.py --model xxx.onnx --baseline env_check/baselines/resnet50_qat.profile.json
+python env_check/check_onnx_structure.py --model xxx.onnx --baseline env_check/baselines/resnet50_qat.profile.json
 ```
 
 退出码非 0 = 存在 FAIL,可直接接 CI。
