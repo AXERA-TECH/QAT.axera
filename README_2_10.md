@@ -38,10 +38,13 @@ PYTHONPATH=. python minimum/minimum_demo.py
 # resnet50 单脚本双环境(--data fake|cifar10,--config 选量化配置)
 PYTHONPATH=. python resnet50/train.py --data cifar10 --steps 50 --seed 42
 
-# 导出结构体检(13 条规则 + 金标准基线对比;FAIL 时退出码非 0,可接 CI)
+# 导出结构体检(13 条规则;FAIL 时退出码非 0,可接 CI)
 python utils/check_onnx_structure.py --model <raw>.onnx --ort
-python utils/check_onnx_structure.py --model <sim>.onnx --sim \
-  --baseline resnet50/resnet50_qat_sim.profile.json
+python utils/check_onnx_structure.py --model <sim>.onnx --sim
+
+# 首次验收通过后固化成自己的基线,此后改动跑基线对比(同网络才有意义)
+python utils/check_onnx_structure.py --model <sim>.onnx --sim --save-profile my.profile.json
+python utils/check_onnx_structure.py --model <新导出>.onnx --sim --baseline my.profile.json
 ```
 
 多卡机器用 `CUDA_VISIBLE_DEVICES=<空卡>` 挑卡。更多入口、动态 shape 写法与防坑清单见

@@ -1,23 +1,25 @@
 ---
 name: qat-check
-description: QAT 导出 ONNX 结构体检——13 条规则检查器、金标准基线对比、全配置矩阵。导出后验证结构、排查量化丢失/污染、对比两份 onnx 时用这个。
+description: QAT 导出 ONNX 结构体检——13 条规则检查器 + 自建基线对比。导出后验证结构、排查量化丢失/污染、对比两份 onnx 时用这个。
 ---
 
 # qat-check:导出结构体检
 
-工具:`utils/check_onnx_structure.py`(通用);金标准基线随各示例存放。FAIL 时退出码非 0,可接 CI。
+工具:`utils/check_onnx_structure.py`(通用)。FAIL 时退出码非 0,可接 CI。
 前置:工作目录为仓库根目录,环境满足 requirements_2_10.txt 或 requirements.txt。
 
 ```bash
 python utils/check_onnx_structure.py --model <raw>.onnx --ort           # raw 规则(R1~R9)
 python utils/check_onnx_structure.py --model <sim>.onnx --sim           # sim 规则(跳 R9,Cast 升 FAIL)
 python utils/check_onnx_structure.py --model <sim>.onnx --sim \
-   --baseline <示例目录>/<x>.profile.json                          # 与基线逐项对比(同网络才有意义)
+   --baseline my.profile.json                                   # 与自建基线逐项对比(同网络才有意义)
 python utils/check_onnx_structure.py --model <m>.onnx --save-profile p.json  # 固化新基线
 ```
 
-基线:`resnet50/resnet50_qat[_sim].profile.json`(金标准,sim 为 4w4f 流 S4/U4)、
-`minimum/minimum_qat[_sim].profile.json`。
+基线是**自己建的**:某次导出通过规则检查后用 `--save-profile` 固化成 profile.json,
+之后每次改动拿新导出跟它 `--baseline` 对比,抓结构回归(权重 DQ 掉了、dtype 变了、
+Q/DQ 少了一片等)。profile 只记结构指纹(opset/算子直方图/weight_dq/act_q/counts),
+不含权重,几百字节。
 
 ## 结果解读(已知例外,勿误判)
 
