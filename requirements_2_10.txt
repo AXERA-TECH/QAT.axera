@@ -1,30 +1,16 @@
-# torch 2.10 环境依赖(双轨:requirements.txt 保留为 torch 2.6 基线)
-# 结构检查工具:utils/check_onnx_structure.py;版本选型依据归档于内部环境文档
-# ⚠️ 内网机器直连 PyPI 会挂死,安装需走清华源:
-#   pip install -r requirements_2_10.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-#
-# 关于 CUDA 构建:torch 栈只钉版本号,不绑定 +cuXXX 本地标识,便于换 CUDA 复用。
-# CUDA 版本由安装时的 index-url 决定,而非写死在本文件:
-#   - 默认 PyPI 的 torch==2.10.0 即为 CUDA 构建(Linux),多数环境直接可用;
-#   - 需指定特定 CUDA(如本机验证用的 cu126)时,加对应 PyTorch 官方源:
-#       pip install -r requirements_2_10.txt \
-#         --index-url https://download.pytorch.org/whl/cu126 \
-#         --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple
-# 本机实测环境为 +cu126 构建,但依赖规格不强制该构建。
+# torch 2.10 依赖(requirements.txt = torch 2.6 基线)
+# 装法见 README_2_10.md「安装依赖」:PyTorch 栈走官方源定 CUDA,其余走清华源
 
-# --- PyTorch 栈(CUDA 构建由 index-url 决定,不在此绑定 cuXXX) ---
+# --- PyTorch 栈(不绑 +cuXXX,CUDA 由 --index-url 决定)---
 torch==2.10.0
 torchvision==0.25.0
 torchaudio==2.10.0
-# torch 2.10 中 torch.ao 的 PT2E QAT 已坏,必须走 torchao(见 README_2_10.md 必知差异①)
-torchao==0.16.0
+torchao==0.16.0            # 2.10 的 torch.ao PT2E 已坏,QAT 必须走 torchao
 
-# --- ONNX 生态 ---
-# onnx 与 torch 2.10 官方 CI pin 一致;onnxscript 0.6.2 修复 optimize
-# 折叠权重 DQ 链问题(本项目提报);onnx-ir 约束 <0.1.16
+# --- ONNX 生态(与 torch 2.10 官方 CI pin 对齐)---
 onnx==1.19.1
-onnxscript==0.6.2
-onnx-ir==0.1.15
+onnxscript==0.6.2          # 修 optimize 折叠权重 DQ 链
+onnx-ir==0.1.15            # 需 <0.1.16
 onnxruntime==1.23.2
 onnx-graphsurgeon==0.6.1
 onnxslim==0.1.94
