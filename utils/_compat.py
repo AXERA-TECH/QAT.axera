@@ -82,6 +82,27 @@ if IS_TORCH_210:
         # 2.10/torchao 版签名已无 using_training_ir(export 只有 training IR 一条路)
         return _pattern_impl(pattern, example_inputs, is_cuda)
 
+    # 2.10 起 torch.ao 与 torchao 均已移除这两个 conv-bn 示例输入常量,
+    # 按 torch 2.6 的原定义补齐(仅上游遗留 quantizer_utils 用到)
+    _conv1d_bn_example_inputs = (
+        torch.randn(1, 1, 3),  # x
+        torch.randn(1, 1, 1),  # conv_weight
+        torch.randn(1),  # conv_bias
+        torch.randn(1),  # bn_weight
+        torch.randn(1),  # bn_bias
+        torch.randn(1),  # bn_running_mean
+        torch.randn(1),  # bn_running_var
+    )
+    _conv2d_bn_example_inputs = (
+        torch.randn(1, 1, 3, 3),  # x
+        torch.randn(1, 1, 1, 1),  # conv_weight
+        torch.randn(1),  # conv_bias
+        torch.randn(1),  # bn_weight
+        torch.randn(1),  # bn_bias
+        torch.randn(1),  # bn_running_mean
+        torch.randn(1),  # bn_running_var
+    )
+
 else:
     from torch.ao.quantization.quantize_pt2e import (  # noqa: F401
         prepare_qat_pt2e,
@@ -133,6 +154,10 @@ else:
     )
     from torch.ao.quantization.fx.utils import (  # noqa: F401
         get_new_attr_name_with_prefix,
+    )
+    from torch.ao.quantization.pt2e.utils import (  # noqa: F401
+        _conv1d_bn_example_inputs,
+        _conv2d_bn_example_inputs,
     )
 
     def get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, gm):

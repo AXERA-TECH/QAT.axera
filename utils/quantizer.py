@@ -9,12 +9,12 @@ import torch
 import torch._dynamo as torchdynamo
 import torch.nn.functional as F
 from torch import Tensor
-from torch.ao.quantization.fake_quantize import (
+from ._compat import (
     FakeQuantize,
     FusedMovingAvgObsFakeQuantize,
 )
-from torch.ao.quantization import observer, ObserverOrFakeQuantize
-from torch.ao.quantization.observer import (
+from ._compat import observer, ObserverOrFakeQuantize
+from ._compat import (
     HistogramObserver,
     MinMaxObserver,
     MovingAverageMinMaxObserver,
@@ -22,9 +22,9 @@ from torch.ao.quantization.observer import (
     PerChannelMinMaxObserver,
     PlaceholderObserver,
 )
-from torch.ao.quantization.quantizer import QuantizationSpec, Quantizer, DerivedQuantizationSpec
-from torch.ao.quantization.quantizer.utils import _get_module_name_filter
-from utils.quantizer_utils import (
+from ._compat import QuantizationSpec, Quantizer, DerivedQuantizationSpec
+from ._compat import _get_module_name_filter, IS_TORCH_210
+from .quantizer_utils import (
     _convert_scalars_to_attrs,
     OP_TO_ANNOTATOR,
     OperatorConfig,
@@ -439,6 +439,15 @@ class AXQuantizer(Quantizer):
 
     def annotate(self, model: torch.fx.GraphModule) -> torch.fx.GraphModule:
         """just handling global spec for now"""
+        # ⚠️ 上游遗留量化器(2.6 时代):module_type_filter 依赖 nn_module_stack、
+        # 注解器依赖 source partitions,torch 2.10 的 export 图两者皆无 →
+        # 会静默漏注解。显式报错,2.10 请改用 utils.ax_quantizer.AXQuantizer
+        if IS_TORCH_210:
+            raise NotImplementedError(
+                "utils/quantizer.py 是上游遗留量化器(依赖 nn_module_stack / "
+                "source partitions),torch 2.10 下需改写后才能使用;"
+                "请改用 utils.ax_quantizer.AXQuantizer(已适配 2.10)"
+            )
         # hacked for handling dynamic linear quant. will fix later.
         if self.global_config and self.global_config.input_activation.is_dynamic:  # type: ignore[union-attr]
             model = self._annotate_for_dynamic_quantization_config(model)

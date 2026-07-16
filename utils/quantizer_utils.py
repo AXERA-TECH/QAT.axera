@@ -7,22 +7,21 @@ from typing import Callable, Dict, List, NamedTuple, Optional
 import torch
 import torch.nn.functional as F
 from torch._subclasses import FakeTensor
-from torch.ao.quantization.fx.utils import get_new_attr_name_with_prefix
-from torch.ao.quantization.pt2e.export_utils import _WrapperModule
-from torch.ao.quantization.pt2e.utils import (
+from ._compat import get_new_attr_name_with_prefix
+from ._compat import _WrapperModule
+from ._compat import (
     _conv1d_bn_example_inputs,
     _conv2d_bn_example_inputs,
-    _get_aten_graph_module_for_pattern,
     _is_conv_node,
     _is_conv_transpose_node,
 )
-from torch.ao.quantization.quantizer import (
+from ._compat import (
     QuantizationAnnotation,
     QuantizationSpec,
     QuantizationSpecBase,
     SharedQuantizationSpec,
 )
-from torch.ao.quantization.quantizer.utils import (
+from ._compat import (
     _annotate_input_qspec_map,
     _annotate_output_qspec,
 )
@@ -507,6 +506,13 @@ def _do_annotate_conv_bn(
         return _WrapperModule(_conv_bn)
 
     # Needed for matching, otherwise the matches gets filtered out due to unused
+    # ⚠️ 依赖 torch._export.gm_using_training_ir,该 helper 在 torch 2.10 已移除;
+    # 本文件是上游遗留量化器的配套(正常流程走 ax_quantizer_utils),
+    # 显式报错以防隐晦的 ImportError
+    raise NotImplementedError(
+        "quantizer_utils._do_annotate_conv_bn 依赖 gm_using_training_ir,"
+        "torch 2.10 下需改写后才能使用;请改用 utils.ax_quantizer_utils"
+    )
     # nodes returned by batch norm
     gm.graph.eliminate_dead_code()
     gm.recompile()
@@ -601,6 +607,10 @@ def _annotate_gru_io_only(
     quantization_config: Optional[QuantizationConfig],
     filter_fn: Optional[Callable[[Node], bool]] = None,
 ) -> Optional[List[List[Node]]]:
+    # ⚠️ 依赖 get_source_partitions,torch 2.10 下恒为空匹配 → 静默漏注解
+    raise NotImplementedError(
+        "gru_io_only 注解器依赖 source partitions,torch 2.10 下需改写后才能使用"
+    )
     gru_partitions = get_source_partitions(gm.graph, [torch.nn.GRU], filter_fn)
     gru_partitions = list(itertools.chain.from_iterable(gru_partitions.values()))
     annotated_partitions = []
@@ -654,6 +664,11 @@ def _annotate_adaptive_avg_pool2d(
     filter_fn: Optional[Callable[[Node], bool]] = None,
 ) -> Optional[List[List[Node]]]:
     """Always annotate adaptive_avg_pool2d op"""
+    # ⚠️ 依赖 get_source_partitions,torch 2.10 下恒为空匹配 → 静默漏注解
+    raise NotImplementedError(
+        "adaptive_avg_pool2d 注解器依赖 source partitions,torch 2.10 下需改写后才能使用;"
+        "已适配版见 utils/ax_quantizer_utils.py(aten 直匹配)"
+    )
     module_partitions = get_source_partitions(
         gm.graph, [torch.nn.AdaptiveAvgPool2d, F.adaptive_avg_pool2d], filter_fn
     )
@@ -1027,6 +1042,11 @@ def _annotate_cat(
     quantization_config: Optional[QuantizationConfig],
     filter_fn: Optional[Callable[[Node], bool]] = None,
 ) -> Optional[List[List[Node]]]:
+    # ⚠️ 依赖 get_source_partitions,torch 2.10 下恒为空匹配 → 静默漏注解
+    raise NotImplementedError(
+        "cat 注解器依赖 source partitions,torch 2.10 下需改写后才能使用;"
+        "已适配版见 utils/ax_quantizer_utils.py(aten 直匹配)"
+    )
     cat_partitions = get_source_partitions(gm.graph, [torch.cat], filter_fn)
     cat_partitions = list(itertools.chain.from_iterable(cat_partitions.values()))
     annotated_partitions = []
