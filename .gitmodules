@@ -1,0 +1,3 @@
+[submodule "AXERA_QUANT_SPEC"]
+	path = AXERA_QUANT_SPEC
+	url = git@github.com:AXERA-TECH/AXERA_QUANT_SPEC.git
