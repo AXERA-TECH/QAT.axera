@@ -3,12 +3,6 @@
 axera QAT demo
 包含一个最小导出 demo 和一个 resnet50 训练 demo
 
-## 量化规范
-
-[AXERA_QUANT_SPEC](https://github.com/AXERA-TECH/AXERA_QUANT_SPEC) 描述 axera 支持的量化规范，以 submodule 形式引入本仓库（`AXERA_QUANT_SPEC/`），包含规范文档、ONNX/QDQ 合规验证工具与在线算子规则站点。
-
-克隆本仓库时请使用 `git clone --recurse-submodules`，或在克隆后执行 `git submodule update --init` 拉取该仓库。
-
 ## minimum export demo
 
 ```bash
@@ -43,3 +37,18 @@ python -m resnet50.test
 ## Validate on board
 
 [请点击查看上板测试文档。](pulsar2/README.md)
+
+## 量化规范
+
+[AXERA_QUANT_SPEC](https://axera-tech.github.io/AXERA_QUANT_SPEC) 描述 axera 支持的量化规范.
+
+`AXERA_QUANT_SPEC/src/verify_qat_onnx.py` 提供了检测导出的 `quant_onnx` 是否合规的工具，使用方法如下
+
+```
+git clone --recurse-submodules
+python AXERA_QUANT_SPEC/src/verify_qat_onnx.py -m quant_onnx.onnx
+# 如果需要做数值检查，则加上-c
+python AXERA_QUANT_SPEC/src/verify_qat_onnx.py -m quant_onnx.onnx -c 
+```
+
+
