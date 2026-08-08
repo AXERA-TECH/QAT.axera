@@ -373,9 +373,11 @@ class AXQuantizer(Quantizer):
         "split",
     ]
 
-    def __init__(self, config_file: str, is_qat: bool = True, annotate_bias: bool = True) -> None:
+    def __init__(self, config_file: str, is_qat: bool = True, annotate_bias: bool = True, quant_ops: Optional[List[str]] = None) -> None:
         super().__init__()
         self._annotate_bias = annotate_bias
+        # 量化算子白名单：None=全部；指定时只量化列出的算子（其余保持 FP32）
+        self._quant_ops = set(quant_ops) if quant_ops else None
 
         # init config
         self.init_global()
@@ -442,6 +444,8 @@ class AXQuantizer(Quantizer):
         # global
         assert self.global_config is not None
         for op in self.OPS:
+            if self._quant_ops is not None and op not in self._quant_ops:
+                continue
             OP_TO_ANNOTATOR[op](model, self.global_config, is_global=True)
         propagate_annotation(model, self.global_config)
 

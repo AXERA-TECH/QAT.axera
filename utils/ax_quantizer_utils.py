@@ -383,9 +383,7 @@ def _annotate_conv(
     gm.graph.eliminate_dead_code()
     gm.recompile()
 
-    from torch._export import gm_using_training_ir
-
-    using_training_ir = gm_using_training_ir(gm)
+    using_training_ir = True  # torch2.9: export_for_training 输出即 training IR
 
     # example_inputs
     _conv1d_example_inputs = (
@@ -442,7 +440,7 @@ def _annotate_conv(
     # Match against all conv dimensions and cuda variants
     for (conv_fn, has_bn, example_inputs), is_cuda, activation in combinations:  # type: ignore[misc]
         pattern = get_pattern(conv_fn, has_bn, activation)  # type: ignore[has-type]
-        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, using_training_ir=using_training_ir)  # type: ignore[has-type]
+        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda)  # type: ignore[has-type]
         pattern.graph.eliminate_dead_code()
         pattern.recompile()
         matcher = SubgraphMatcherWithNameNodeMap(pattern, ignore_literals=True)
@@ -560,9 +558,7 @@ def _annotate_convtranspose(
     gm.graph.eliminate_dead_code()
     gm.recompile()
 
-    from torch._export import gm_using_training_ir
-
-    using_training_ir = gm_using_training_ir(gm)
+    using_training_ir = True  # torch2.9: export_for_training 输出即 training IR
 
     # example_inputs
     _conv1d_example_inputs = (
@@ -619,7 +615,7 @@ def _annotate_convtranspose(
     # Match against all conv dimensions and cuda variants
     for (conv_fn, has_bn, example_inputs), is_cuda, activation in combinations:  # type: ignore[misc]
         pattern = get_pattern(conv_fn, has_bn, activation)  # type: ignore[has-type]
-        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, using_training_ir=using_training_ir)  # type: ignore[has-type]
+        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda)  # type: ignore[has-type]
         pattern.graph.eliminate_dead_code()
         pattern.recompile()
         matcher = SubgraphMatcherWithNameNodeMap(pattern, ignore_literals=True)
