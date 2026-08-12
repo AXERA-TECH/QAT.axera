@@ -1,38 +1,41 @@
+"""stage2 循环复用的分段 QAT 训练(torch 2.10,utils 统一 API)。
+
+说明:
+  1. 模型类(ResNetFloat/Stage1/2/3/MultiStage)无 torch.ao 依赖,直接从原模块 import 复用;
+  2. 图捕获:torch.export.export + 动态 batch(训练 batch=32);
+  3. float 参考导出与 QAT 导出同路径(dynamo_export);
+  4. 数据:机器无 ImageNet 训练集 → imagenet_data_loaders(fake_data=True);
+  5. 修正原版导出处的双层 tuple 笔误 dynamo_export(model, (example_inputs,));
+  6. 产物写入 reuse_conv/ 目录。
+
+运行:
+  cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
+    <env>/bin/python reuse_conv/train_resnet.py
+"""
 import copy
+
 import torch
+from torch.export import Dim
 import torch.nn as nn
 from torch import Tensor
 from torchvision.models.resnet import ResNet, Bottleneck, BasicBlock
-from typing import Any, Callable, List, Optional, Type, Union
-import numpy as np
+from typing import Callable, List, Optional, Type, Union
+from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
+from torchao.quantization.pt2e import move_exported_model_to_eval
 
-from torch.ao.quantization.quantizer.xnnpack_quantizer import (
-    XNNPACKQuantizer,
-    get_symmetric_quantization_config,
-)
-from torch.ao.quantization.quantize_pt2e import (
-    prepare_qat_pt2e,
-    convert_pt2e,
-)
-
-# from utils.quantizer import (
-#     AXQuantizer,
-#     get_quantization_config,
-# )
-from utils.ax_quantizer import(
-    load_config,
-    AXQuantizer,
-    remove_reused_bn_param_hack,
-)
+from utils.ax_quantizer import AXQuantizer, load_config
 from utils.train_utils import (
+    dynamo_export,
     load_model,
     train_one_epoch,
     imagenet_data_loaders,
-    dynamo_export,
     onnx_simplify,
     evaluate,
 )
-import utils.quantized_decomposed_dequantize_per_channel
+import utils.quantized_decomposed_dequantize_per_channel  # noqa: F401 注册 per-channel torchlib 映射
+
+import warnings
+warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
 
 
 class ResNetFloat(ResNet):
@@ -261,11 +264,13 @@ class ResNetMultiStage(ResNet):
 
 
 def train():
-    # load data
-    data_loader, data_loader_test = imagenet_data_loaders("dataset/imagenet/")
-    example_inputs_stage1 = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    example_inputs_stage2 = (torch.rand(1, 256, 56, 56).to("cuda"),)
-    example_inputs_stage3 = (torch.rand(1, 256, 56, 56).to("cuda"),)
+    # load data(fake_data:机器无 ImageNet 训练集;fake_train_size 需 > 每
+    # epoch 步数×batch,否则 loader 提前耗尽)
+    data_loader, data_loader_test = imagenet_data_loaders(
+        "dataset/imagenet/", fake_data=True, fake_train_size=3200)
+    example_inputs_stage1 = (torch.rand(2, 3, 224, 224).to("cuda"),)
+    example_inputs_stage2 = (torch.rand(2, 256, 56, 56).to("cuda"),)
+    example_inputs_stage3 = (torch.rand(2, 256, 56, 56).to("cuda"),)
 
     # set float model
     float_model = ResNetFloat(Bottleneck, [3, 4, 6, 3]).to("cuda")
@@ -277,24 +282,31 @@ def train():
     # float_model_stage2.load_state_dict(state_dict)
     float_model_stage3.load_state_dict(state_dict)
 
-    float_path = "./reuse_conv/resnet50_float.onnx"
-    dynamo_export(float_model, example_inputs_stage1, float_path)
-    float_path_stage1 = "./reuse_conv/resnet50_float_stage1.onnx"
-    dynamo_export(float_model_stage1, example_inputs_stage1, float_path_stage1)
-    float_path_stage2 = "./reuse_conv/resnet50_float_stage2.onnx"
-    dynamo_export(float_model_stage2, example_inputs_stage2, float_path_stage2)
-    float_path_stage3 = "./reuse_conv/resnet50_float_stage3.onnx"
-    dynamo_export(float_model_stage3, example_inputs_stage3, float_path_stage3)
+    # float 参考导出(与 QAT 导出同路径 dynamo_export)
+    dynamo_export(float_model, example_inputs_stage1,
+                  "./reuse_conv/resnet50_float_ax.onnx")
+    dynamo_export(float_model_stage1, example_inputs_stage1,
+                  "./reuse_conv/resnet50_float_stage1_ax.onnx")
+    dynamo_export(float_model_stage2, example_inputs_stage2,
+                  "./reuse_conv/resnet50_float_stage2_ax.onnx")
+    dynamo_export(float_model_stage3, example_inputs_stage3,
+                  "./reuse_conv/resnet50_float_stage3_ax.onnx")
 
     # quantizer
     global_config, regional_configs = load_config("./reuse_conv/config.json")
-    quantizer = AXQuantizer(annotate_bias=False)
-    quantizer.set_global(global_config)
-    quantizer.set_regional(regional_configs)
+    quantizer = AXQuantizer("./reuse_conv/config.json", annotate_bias=False)
 
-    exported_model_stage1 = torch.export.export_for_training(float_model_stage1, example_inputs_stage1).module()
-    exported_model_stage2 = torch.export.export_for_training(float_model_stage2, example_inputs_stage2).module()
-    exported_model_stage3 = torch.export.export_for_training(float_model_stage3, example_inputs_stage3).module()
+    # 分段捕获(batch 动态,example 给 >=2 规避 0/1 特化)
+    dynamic_shapes = ({0: Dim("batch", min=1, max=1024)},)
+    exported_model_stage1 = torch.export.export(
+        float_model_stage1.train(), example_inputs_stage1, dynamic_shapes=dynamic_shapes,
+    ).module()
+    exported_model_stage2 = torch.export.export(
+        float_model_stage2.train(), example_inputs_stage2, dynamic_shapes=dynamic_shapes,
+    ).module()
+    exported_model_stage3 = torch.export.export(
+        float_model_stage3.train(), example_inputs_stage3, dynamic_shapes=dynamic_shapes,
+    ).module()
     prepared_model_stage1 = prepare_qat_pt2e(exported_model_stage1, quantizer)
     prepared_model_stage2 = prepare_qat_pt2e(exported_model_stage2, quantizer)
     prepared_model_stage3 = prepare_qat_pt2e(exported_model_stage3, quantizer)
@@ -312,23 +324,13 @@ def train():
     optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
 
     # train
-    num_epochs_between_evals = 2
     for nepoch in range(num_epochs):
         train_one_epoch(model, criterion, optimizer, data_loader, "cuda", num_train_batches)
 
-        # checkpoint_path = "./reuse_conv/checkpoint/checkpoint_%s.pth" % nepoch
-        # torch.save(prepared_model.state_dict(), checkpoint_path)
-
-        # if (nepoch + 1) % num_epochs_between_evals == 0:
-        #     prepared_model_copy = copy.deepcopy(prepared_model)
-        #     quantized_model = convert_pt2e(prepared_model_copy)
-        #     top1, top5 = evaluate(quantized_model, data_loader_test)
-        #     print('Epoch %d: Evaluation accuracy, %2.2f' % (nepoch, top1.avg))
-
-    torch.save(model.state_dict(), "./reuse_conv/resnet50.pth")
-    torch.save(model.stage1.state_dict(), "./reuse_conv/resnet50_stage1.pth")
-    torch.save(model.stage2.state_dict(), "./reuse_conv/resnet50_stage2.pth")
-    torch.save(model.stage3.state_dict(), "./reuse_conv/resnet50_stage3.pth")
+    torch.save(model.state_dict(), "./reuse_conv/resnet50_ax.pth")
+    torch.save(model.stage1.state_dict(), "./reuse_conv/resnet50_stage1_ax.pth")
+    torch.save(model.stage2.state_dict(), "./reuse_conv/resnet50_stage2_ax.pth")
+    torch.save(model.stage3.state_dict(), "./reuse_conv/resnet50_stage3_ax.pth")
 
     # evaluate
     float_stage = copy.deepcopy(model)
@@ -339,9 +341,9 @@ def train():
 
     def quantized_model_forward(x):
         float_stage.eval()
-        torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage1)
-        torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage2)
-        torch.ao.quantization.move_exported_model_to_eval(quantized_model_stage3)
+        move_exported_model_to_eval(quantized_model_stage1)
+        move_exported_model_to_eval(quantized_model_stage2)
+        move_exported_model_to_eval(quantized_model_stage3)
 
         x = quantized_model_stage1(x)
         for i in range(2):
@@ -351,22 +353,23 @@ def train():
 
         return x
     top1, top5 = evaluate(quantized_model_forward, data_loader_test, total_size=100)
+    print(f"[eval] 分段量化(fake data): top1={top1.avg:.3f} top5={top5.avg:.3f}")
 
-    # export
-    qat_path_stage1 = "./reuse_conv/resnet50_qat_stage1.onnx"
-    dynamo_export(quantized_model_stage1, (example_inputs_stage1,), qat_path_stage1)
-    qat_path_stage2 = "./reuse_conv/resnet50_qat_stage2.onnx"
-    dynamo_export(quantized_model_stage2, (example_inputs_stage2,), qat_path_stage2)
-    qat_path_stage3 = "./reuse_conv/resnet50_qat_stage3.onnx"
-    dynamo_export(quantized_model_stage3, (example_inputs_stage3,), qat_path_stage3)
+    # export(部署产物:固定 shape,example batch=1 且不声明动态维)
+    export_example_stage1 = (torch.rand(1, 3, 224, 224).to("cuda"),)
+    export_example_stage2 = (torch.rand(1, 256, 56, 56).to("cuda"),)
+    export_example_stage3 = (torch.rand(1, 256, 56, 56).to("cuda"),)
+    qat_path_stage1 = "./reuse_conv/resnet50_qat_stage1_ax.onnx"
+    dynamo_export(quantized_model_stage1, export_example_stage1, qat_path_stage1)
+    qat_path_stage2 = "./reuse_conv/resnet50_qat_stage2_ax.onnx"
+    dynamo_export(quantized_model_stage2, export_example_stage2, qat_path_stage2)
+    qat_path_stage3 = "./reuse_conv/resnet50_qat_stage3_ax.onnx"
+    dynamo_export(quantized_model_stage3, export_example_stage3, qat_path_stage3)
 
-    # # onnx simplify
-    sim_path_stage1 = "./reuse_conv/resnet50_qat_sim_stage1.onnx"
-    onnx_simplify(qat_path_stage1, sim_path_stage1)
-    sim_path_stage2 = "./reuse_conv/resnet50_qat_sim_stage2.onnx"
-    onnx_simplify(qat_path_stage2, sim_path_stage2)
-    sim_path_stage3 = "./reuse_conv/resnet50_qat_sim_stage3.onnx"
-    onnx_simplify(qat_path_stage3, sim_path_stage3)
+    # onnx simplify
+    onnx_simplify(qat_path_stage1, "./reuse_conv/resnet50_qat_sim_stage1_ax.onnx")
+    onnx_simplify(qat_path_stage2, "./reuse_conv/resnet50_qat_sim_stage2_ax.onnx")
+    onnx_simplify(qat_path_stage3, "./reuse_conv/resnet50_qat_sim_stage3_ax.onnx")
 
 
 if __name__ == "__main__":

@@ -626,3 +626,32 @@ graph():
 ### 几点说明：
 - module_names 为可选配置，module_type 为必须配置，为了支持 yolov5s，目前只支持了"add", "conv", "concat", "silu", "avgpool", "linear"算子的量化
 - 量化配置实际上是以 pattern 为单位，而不是算子，比如上面 U16 量化的 conv 其实是 conv_bn_relu ，作为一组 pattern，暂时 module_type 只需要配置 pattern 中的核心计算算子，以后会添加 module_type 配置的详细说明。
+
+---
+
+## torch 2.10 使用说明
+
+量化流程基于 torch 2.10 + torchao(入口:`from utils.ax_quantizer import AXQuantizer`、
+`from utils.train_utils import dynamo_export` 等直连模块,动态形状以 torch 原生
+dynamic_shapes 传入):
+
+**图捕获**:`export_for_training` 已废弃,用 `torch.export.export`
+(训练场景需声明动态 batch):
+
+```
+exported_model = torch.export.export(float_model.train(), example_inputs,
+                                     dynamic_shapes=dynamic_shapes).module()
+print(exported_model.graph)
+```
+
+**找 module_names 的时机**:在 prepare 之前的捕获图上找名字(conv2d_1、
+add__5 等命名规则与 torch 2.6 时代一致),"打印 graph 找名字" 的方法不变。
+
+⚠️ **务必在 prepare 之前的捕获图上找名字**:convert_pt2e 的 conv-bn 折叠
+会把 conv 节点重建并整体改名(实测变为 conv2d_106 起的新编号),
+convert 之后的图与配置里的 module_names 对不上属正常现象,不要以它为准。
+如需在 convert 后的图上定位结构(例如切子图),用拓扑序位置索引,参考
+multi_stage/multi_stage_demo.py 的 find_stage_cuts()。
+
+regional 混合精度(U16/U4/FP32 区域)在本管线(直连 utils 模块)下已全配置
+复测通过,可按上文示例配置。

@@ -1,3 +1,9 @@
+# ============================================================================
+# axquant 参考补丁(torch 2.10;本文件不在本仓库内运行,
+# 用法:拷入 ultralytics/yolov5 检出目录,并把 QAT.axera/utils/ 整个包拷为
+# 同目录下的 qat_utils/(⚠️ 不能叫 utils,会与 yolov5 自带 utils 包冲突);
+# 环境按 QAT.axera/requirements.txt(torch 2.10)配置。
+# ============================================================================
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
 Train a YOLOv5 model on a custom dataset. Models and datasets download automatically from the latest YOLOv5 release.
@@ -227,10 +233,10 @@ def train(hyp, opt, device, callbacks):
     # from IPython import embed; embed()
     import onnx
     from onnxslim import slim
-    from torch.ao.quantization.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
-    from torch.ao.quantization.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
-    from ax_quantizer import AXQuantizer, load_config
-    import quantized_decomposed_dequantize_per_channel
+    from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
+    from qat_utils.ax_quantizer import AXQuantizer, load_config
+    from qat_utils.train_utils import capture
+    import qat_utils.quantized_decomposed_dequantize_per_channel  # noqa: F401 注册 per-channel torchlib 映射
 
     inputs = torch.rand(1, 3, 640, 640).to("cuda")
     onnx_program = torch.onnx.export(model, (inputs,), dynamo=True)
@@ -370,10 +376,10 @@ def train(hyp, opt, device, callbacks):
 
     # quantizer
     global_config, regional_configs = load_config("./config.json")
-    quantizer = AXQuantizer()
+    quantizer = AXQuantizer("config.json")  # config_file 必填(原版无参调用是笔误)
     quantizer.set_global(global_config)
     quantizer.set_regional(regional_configs)
-    exported_model = torch.export.export_for_training(model, (inputs,)).module()
+    exported_model = capture(model, (inputs,), dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},))
     # from IPython import embed; embed()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
     model = prepared_model

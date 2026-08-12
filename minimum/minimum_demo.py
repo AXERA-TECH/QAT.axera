@@ -1,40 +1,25 @@
-import re
-import onnx
-import torch  # Version: 2.6.0+cu118
+"""最小示例(torch 2.10,utils 统一 API):conv+BN+ReLU 小网络 QAT → 导出。
+
+- 图捕获:显式 torch.export.export(静态 shape,无需 dynamic_shapes);
+- dynamo_export():float 参考与 QAT 导出同路径;
+- dynamo_export():optimize=False + 函数内联;
+- per-channel torchlib 映射:脚本显式 import utils.quantized_decomposed_dequantize_per_channel 注册。
+
+运行:
+  cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
+    <env>/bin/python minimum/minimum_demo.py
+"""
+import torch
 import torch.nn as nn
+from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
 
-from torch.ao.quantization.quantizer.xnnpack_quantizer import (
-    XNNPACKQuantizer,
-    get_symmetric_quantization_config,
-)
-from torch.ao.quantization.quantize_pt2e import (
-    prepare_qat_pt2e,
-    convert_pt2e,
-)
-
-# from utils.quantizer import (
-#     AXQuantizer,
-#     get_quantization_config,
-# )
-from utils.ax_quantizer import(
-    load_config,
-    AXQuantizer,
-)
-from utils.train_utils import dynamo_export, onnx_simplify
+from utils.ax_quantizer import AXQuantizer
+from utils.train_utils import dynamo_export
 from utils.quant_utils import simplify_and_fix_4bit_dtype
-import utils.quantized_decomposed_dequantize_per_channel
+import utils.quantized_decomposed_dequantize_per_channel  # noqa: F401 注册 per-channel torchlib 映射
 
-# Set up warnings
 import warnings
-warnings.filterwarnings(
-    action='ignore',
-    category=DeprecationWarning,
-    module=r'.*'
-)
-warnings.filterwarnings(
-    action='default',
-    module=r'torch.ao.quantization'
-)
+warnings.filterwarnings(action='ignore', category=DeprecationWarning, module=r'.*')
 
 
 class Net(nn.Module):
@@ -52,6 +37,7 @@ class Net(nn.Module):
 
 
 # example inputs
+torch.manual_seed(42)
 input = torch.rand(1, 32, 256, 768).to("cuda")
 
 # float_model
@@ -63,19 +49,9 @@ dynamo_export(float_model, input, float_path)
 quantizer = AXQuantizer("./minimum/config.json")
 
 # export qat model
-exported_model = torch.export.export_for_training(float_model, (input,)).module()
+# 静态 shape 捕获(example 固定 batch=1,直接 torch.export.export)
+exported_model = torch.export.export(float_model.train(), (input,)).module()
 prepared_model = prepare_qat_pt2e(exported_model, quantizer)
-
-# # train
-# criterion = torch.nn.CrossEntropyLoss()
-# optimizer = torch.optim.SGD(prepared_model.parameters(), lr=0.001, momentum=0.9)  # 更小的学习率
-# output = prepared_model(input)
-# target = torch.rand(1, 32, 256, 768).to("cuda")  # 随机一个 gt 训一轮
-
-# loss = criterion(output, target)
-# optimizer.zero_grad()
-# loss.backward()
-# optimizer.step()
 
 quantized_model = convert_pt2e(prepared_model)
 

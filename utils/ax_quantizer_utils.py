@@ -9,26 +9,26 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 from torch._subclasses import FakeTensor
-from torch.ao.quantization.fx.utils import get_new_attr_name_with_prefix
-from torch.ao.quantization.pt2e.export_utils import _WrapperModule
-from torch.ao.quantization.pt2e.utils import (
-    # _conv1d_bn_example_inputs,
-    # _conv2d_bn_example_inputs,
-    _get_aten_graph_module_for_pattern,
+from torchao.quantization.pt2e.utils import (
+    get_new_attr_name_with_prefix,
     _is_conv_node,
     _is_conv_transpose_node,
+    _get_aten_graph_module_for_pattern,
 )
-from torch.ao.quantization import observer, ObserverOrFakeQuantize
-from torch.ao.quantization.quantizer import (
+from torchao.quantization.pt2e.export_utils import (
+    WrapperModule as _WrapperModule,
+)
+from torchao.quantization.pt2e import observer, ObserverOrFakeQuantize
+from torchao.quantization.pt2e.quantizer import (
     QuantizationAnnotation,
     QuantizationSpec,
     QuantizationSpecBase,
     SharedQuantizationSpec,
     DerivedQuantizationSpec,
 )
-from torch.ao.quantization.quantizer.utils import (
-    _annotate_input_qspec_map,
-    _annotate_output_qspec,
+from torchao.quantization.pt2e.quantizer.utils import (
+    annotate_input_qspec_map as _annotate_input_qspec_map,
+    annotate_output_qspec as _annotate_output_qspec,
 )
 from torch.fx import Node
 from torch.fx.passes.utils.matcher_with_name_node_map_utils import (
@@ -65,9 +65,7 @@ class QuantizationConfig:
 
 
 OperatorPatternType = List[Callable]
-OperatorPatternType.__module__ = (
-    "torch.ao.quantization.quantizer.xnnpack_quantizer_utils"
-)
+
 
 AnnotatorType = Callable[
     [
@@ -383,10 +381,6 @@ def _annotate_conv(
     gm.graph.eliminate_dead_code()
     gm.recompile()
 
-    from torch._export import gm_using_training_ir
-
-    using_training_ir = gm_using_training_ir(gm)
-
     # example_inputs
     _conv1d_example_inputs = (
         torch.randn(1, 1, 3),  # x
@@ -442,7 +436,7 @@ def _annotate_conv(
     # Match against all conv dimensions and cuda variants
     for (conv_fn, has_bn, example_inputs), is_cuda, activation in combinations:  # type: ignore[misc]
         pattern = get_pattern(conv_fn, has_bn, activation)  # type: ignore[has-type]
-        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, using_training_ir=using_training_ir)  # type: ignore[has-type]
+        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda)  # type: ignore[has-type]
         pattern.graph.eliminate_dead_code()
         pattern.recompile()
         matcher = SubgraphMatcherWithNameNodeMap(pattern, ignore_literals=True)
@@ -560,10 +554,6 @@ def _annotate_convtranspose(
     gm.graph.eliminate_dead_code()
     gm.recompile()
 
-    from torch._export import gm_using_training_ir
-
-    using_training_ir = gm_using_training_ir(gm)
-
     # example_inputs
     _conv1d_example_inputs = (
         torch.randn(1, 1, 3),  # x
@@ -619,7 +609,7 @@ def _annotate_convtranspose(
     # Match against all conv dimensions and cuda variants
     for (conv_fn, has_bn, example_inputs), is_cuda, activation in combinations:  # type: ignore[misc]
         pattern = get_pattern(conv_fn, has_bn, activation)  # type: ignore[has-type]
-        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda, using_training_ir=using_training_ir)  # type: ignore[has-type]
+        pattern = _get_aten_graph_module_for_pattern(pattern, example_inputs, is_cuda)  # type: ignore[has-type]
         pattern.graph.eliminate_dead_code()
         pattern.recompile()
         matcher = SubgraphMatcherWithNameNodeMap(pattern, ignore_literals=True)
@@ -701,6 +691,12 @@ def _annotate_gru_io_only(
     quantization_config: Optional[QuantizationConfig],
     filter_fn: Optional[Callable[[Node], bool]] = None,
 ) -> Optional[List[List[Node]]]:
+    # ⚠️ 依赖 get_source_partitions,torch2.10 下恒为空匹配。该注解器不在
+    # AXQuantizer.OPS 中(正常流程不会调用),如需启用必须先改写,
+    # 显式报错以防静默漏注解
+    raise NotImplementedError(
+        "gru_io_only 注解器依赖 source partitions,torch 2.10 下需改写后才能使用"
+    )
     gru_partitions = get_source_partitions(gm.graph, [torch.nn.GRU], filter_fn)
     gru_partitions = list(itertools.chain.from_iterable(gru_partitions.values()))
     annotated_partitions = []
@@ -755,13 +751,9 @@ def _annotate_adaptive_avg_pool2d(
     is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
     """Always annotate adaptive_avg_pool2d op"""
-    module_partitions = get_source_partitions(
-        gm.graph, [torch.nn.AvgPool2d, torch.nn.AdaptiveAvgPool2d, F.adaptive_avg_pool2d], None
-    )
-    partitions = list(itertools.chain.from_iterable(module_partitions.values()))
-
-    for partition in partitions:
-        pool_node = partition.output_nodes[0]
+    # torch2.10 的 export 图不带 source_fn_stack/nn_module_stack,
+    # get_source_partitions 恒为空 → 改为按 aten 目标直接匹配(注解语义不变)
+    for pool_node in gm.graph.nodes:
         if (
             pool_node.op != "call_function"
             or pool_node.target not in [
@@ -769,7 +761,7 @@ def _annotate_adaptive_avg_pool2d(
                 torch.ops.aten.adaptive_avg_pool2d.default,
             ]
         ):
-            raise ValueError(f"{pool_node} is not an aten avg_pool2d operator")
+            continue
 
         input_node = pool_node.args[0]
         assert isinstance(input_node, Node)
@@ -789,7 +781,7 @@ def _annotate_adaptive_avg_pool2d(
                 _annotated=True,
             )
         else:
-            if not _is_annotated(partition):
+            if not _is_annotated([pool_node]):
                 assert False
             if module_names is not None and pool_node.name not in module_names:
                 continue
@@ -807,18 +799,13 @@ def _annotate_layer_norm(
     is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
     """Always annotate layer_norm op"""
-    module_partitions = get_source_partitions(
-        gm.graph, [torch.nn.LayerNorm, F.layer_norm], None
-    )
-    partitions = list(itertools.chain.from_iterable(module_partitions.values()))
-
-    for partition in partitions:
-        norm_node = partition.output_nodes[0]
+    # torch2.10 下 get_source_partitions 恒为空 → aten 目标直接匹配(注解语义不变)
+    for norm_node in gm.graph.nodes:
         if (
             norm_node.op != "call_function"
             or norm_node.target != torch.ops.aten.layer_norm.default
         ):
-            raise ValueError(f"{norm_node} is not an aten adaptive_avg_pool2d operator")
+            continue
 
         input_node = norm_node.args[0]
         assert isinstance(input_node, Node)
@@ -838,7 +825,7 @@ def _annotate_layer_norm(
                 _annotated=True,
             )
         else:
-            if not _is_annotated(partition):
+            if not _is_annotated([norm_node]):
                 assert False
             if module_names is not None and norm_node.name not in module_names:
                 continue
@@ -856,18 +843,13 @@ def _annotate_group_norm(
     is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
     """Always annotate group_norm op"""
-    module_partitions = get_source_partitions(
-        gm.graph, [torch.nn.GroupNorm, F.group_norm], None
-    )
-    partitions = list(itertools.chain.from_iterable(module_partitions.values()))
-
-    for partition in partitions:
-        norm_node = partition.output_nodes[0]
+    # torch2.10 下 get_source_partitions 恒为空 → aten 目标直接匹配(注解语义不变)
+    for norm_node in gm.graph.nodes:
         if (
             norm_node.op != "call_function"
             or norm_node.target != torch.ops.aten.group_norm.default
         ):
-            raise ValueError(f"{norm_node} is not an aten adaptive_avg_pool2d operator")
+            continue
 
         input_node = norm_node.args[0]
         assert isinstance(input_node, Node)
@@ -887,7 +869,7 @@ def _annotate_group_norm(
                 _annotated=True,
             )
         else:
-            if not _is_annotated(partition):
+            if not _is_annotated([norm_node]):
                 assert False
             if module_names is not None and norm_node.name not in module_names:
                 continue
@@ -1312,18 +1294,10 @@ def _annotate_cat(
     module_names: List[str] = None,
     is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
-    cat_partitions = get_source_partitions(gm.graph, [torch.cat], None)
-    cat_partitions = list(itertools.chain.from_iterable(cat_partitions.values()))
-
-    for cat_partition in cat_partitions:
-        cat_node = cat_partition.output_nodes[0]
-
-        if cat_node.target != torch.ops.aten.cat.default:
-            # TODO: change this to AnnotationException
-            raise Exception(  # noqa: TRY002
-                f"Expected cat node: torch.ops.aten.cat.default, but found {cat_node.target}"
-                " please check if you are calling the correct capture API"
-            )
+    # torch2.10 下 get_source_partitions 恒为空 → aten 目标直接匹配(注解语义不变)
+    for cat_node in gm.graph.nodes:
+        if cat_node.op != "call_function" or cat_node.target != torch.ops.aten.cat.default:
+            continue
 
         input_act_qspec = get_input_act_qspec(quantization_config)
         output_act_qspec = get_output_act_qspec(quantization_config)
@@ -1409,6 +1383,12 @@ def _annotate_mha(
     module_names: List[str] = None,
     is_global: bool = True,
 ) -> Optional[List[List[Node]]]:
+    # ⚠️ 依赖 get_source_partitions,torch2.10 下恒为空匹配。该注解器不在
+    # AXQuantizer.OPS 中(正常流程不会调用),如需启用必须先改写,
+    # 显式报错以防静默漏注解
+    raise NotImplementedError(
+        "mha 注解器依赖 source partitions,torch 2.10 下需改写后才能使用"
+    )
     mha_partitions = get_source_partitions(gm.graph, [torch.nn.modules.activation.MultiheadAttention], None)
     mha_partitions = list(itertools.chain.from_iterable(mha_partitions.values()))
 

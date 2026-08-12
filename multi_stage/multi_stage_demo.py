@@ -1,60 +1,106 @@
-import copy
-import torch
-import torch.nn as nn
-from torch import Tensor
-from torchvision.models.resnet import ResNet, Bottleneck, BasicBlock
-from typing import Any, Callable, List, Optional, Type, Union
+"""多段推理 demo(torch 2.10,utils 统一 API):完整量化模型切子图分段推理。
 
-from torch.ao.quantization.quantize_pt2e import (
-    prepare_qat_pt2e,
-    convert_pt2e,
-)
-from utils.ax_quantizer import(
-    load_config,
-    AXQuantizer,
-)
-from utils.train_utils import (
-    load_model,
-    imagenet_data_loaders,
-    dynamo_export,
-    onnx_simplify,
-    evaluate,
-)
+说明:
+  1. 图捕获:torch.export.export + 动态 batch(评测 batch=32,静态 guard 会炸,
+     同 resnet50/train.py);
+  2. 数据:机器上没有 ImageNet 训练集 → CIFAR-10(10 类 fc,种子与
+     resnet50 训练一致),checkpoint 用全 epoch QAT 产物
+     last_checkpoint.pth(test top1≈94.97);
+  3. 切子图起止点:不硬编码节点名(convert 后节点整体改名,按名字找不可靠),
+     改为按结构自动定位:以 layer 边界 conv(conv2d_11 = layer2.0.conv1,
+     conv2d_43 = layer4.0.conv1)的输入向上追 DQ/Q,与原 demo 的三段划分
+     (stem+layer1 / layer2+3 / layer4+head)一致;分段边界两侧各含完整
+     Q/DQ(与原 demo "起始和末尾都要有完整的量化节点"约定相同)。
+  4. 浮点基线说明:torch.export 的 .module() 与原模型共享参数存储,
+     prepared.load_state_dict(checkpoint) 会原地覆盖 → mode1 实际是
+     「QAT 训练权重的浮点推理」(实测 94.34)。本 demo 的验证重点是
+     mode3(完整量化) ≈ mode5(切子图分段),实测二者一分不差(94.50)。
+
+运行:
+  cd /home/heqi/project-qat/QAT.axera && PYTHONPATH=. CUDA_VISIBLE_DEVICES=<空卡> \
+    <env>/bin/python multi_stage/multi_stage_demo.py
+"""
+import torch
+from torch.export import Dim
+from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e, convert_pt2e
+from torchao.quantization.pt2e import move_exported_model_to_eval
+
+from utils.ax_quantizer import AXQuantizer, load_config
+from utils.train_utils import load_model, cifar10_data_loaders, evaluate
 from utils.extract import extract_subgraph
-from IPython import embed
+import utils.quantized_decomposed_dequantize_per_channel  # noqa: F401 注册 per-channel torchlib 映射
+
+SEED = 42
+
+
+def find_stage_cuts(gm, boundary_conv_idx=(11, 43)):
+    """按结构定位三段切点:对每个边界 conv,取其输入 DQ 与该 DQ 的 Q 生产者。
+
+    边界 conv 用**拓扑序位置**定位(第 11 个 = layer2.0.conv1,第 43 个 =
+    layer4.0.conv1):convert_pt2e 的 conv-bn 折叠会重建 conv 节点、名字整体
+    偏移(实测变成 conv2d_106 起),按名字找不可靠,按 forward 顺序位置不变。
+    返回 [(start_q_name, end_dq_name), ...] 三段;第一段起点 = 图中第一个
+    激活 Q,最后一段终点 = 输出前最后一个 DQ。段边界两侧共享同一 Q/DQ 对
+    (原 demo 同款重叠切法,数值上 Q(DQ(t)) 幂等)。
+    """
+    convs = [n for n in gm.graph.nodes
+             if n.op == "call_function" and "conv" in str(n.target)]
+    first_q = next(n for n in gm.graph.nodes
+                   if n.op == "call_function" and "quantize_per_tensor" in str(n.target)
+                   and "dequantize" not in str(n.target))
+    output_node = next(n for n in gm.graph.nodes if n.op == "output")
+    last_dq = output_node.args[0][0] if isinstance(output_node.args[0], (tuple, list)) \
+        else output_node.args[0]
+
+    cuts, starts = [], [first_q.name]
+    for idx in boundary_conv_idx:
+        conv = convs[idx]
+        dq = conv.args[0]           # 边界 DQ(共享输入可能有两个 DQ,任取喂此 conv 的)
+        q = dq.args[0]              # 边界 Q
+        assert "dequantize" in str(dq.target) and "quantize" in str(q.target), \
+            f"conv[{idx}]({conv.name}) 上游不是 Q/DQ: {dq.target} / {q.target}"
+        cuts.append((starts[-1], dq.name))
+        starts.append(q.name)
+    cuts.append((starts[-1], last_dq.name))
+    return cuts
 
 
 if __name__ == "__main__":
-    # 预训练权重
-    model_file = "./resnet50/resnet50_pretrained_float.pth"
-    # 数据集
-    data_loader, data_loader_test = imagenet_data_loaders("dataset/imagenet/")
-    example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
+    torch.manual_seed(SEED)
+    # 数据集(CIFAR-10,理由见文件头)
+    data_loader, data_loader_test = cifar10_data_loaders("dataset/cifar10")
+    example_inputs = (torch.rand(2, 3, 224, 224).to("cuda"),)
     # quantizer
     global_config, regional_configs = load_config("./resnet50/config.json")
-    quantizer = AXQuantizer()
-    quantizer.set_global(global_config)
-    quantizer.set_regional(regional_configs)
+    quantizer = AXQuantizer("./resnet50/config.json")
 
-    # float model
-    model = load_model(model_file, "resnet50").to("cuda")
-    # quantized model
-    example_inputs = (torch.rand(1, 3, 224, 224).to("cuda"),)
-    exported_model = torch.export.export_for_training(model, example_inputs).module()
+    # float model(10 类 fc,种子与 resnet50/train.py 一致以对上 checkpoint)
+    model = load_model("./resnet50/resnet50_pretrained_float.pth", "resnet50").to("cuda")
+    torch.manual_seed(SEED)
+    model.fc = torch.nn.Linear(model.fc.in_features, 10).to("cuda")
+
+    # quantized model(batch 动态,example 给 >=2 规避 0/1 特化)
+    dynamic_shapes = ({0: Dim("batch", min=1, max=1024)},)
+    exported_model = torch.export.export(
+        model.train(), example_inputs, dynamic_shapes=dynamic_shapes,
+    ).module()
     prepared_model = prepare_qat_pt2e(exported_model, quantizer)
 
-    prepared_model.load_state_dict(torch.load("./resnet50/checkpoint/last_checkpoint.pth"))
+    prepared_model.load_state_dict(
+        torch.load("./resnet50/checkpoint/last_checkpoint.pth", weights_only=True))
     quantized_model = convert_pt2e(prepared_model)
-    # submodule
-    # 这里可能需要修改 subgraph 起止 node name
-    submodule_1 = extract_subgraph(quantized_model, ["quantize_per_tensor_default"], ["dequantize_per_tensor_default_80"])
-    submodule_2 = extract_subgraph(quantized_model, ["quantize_per_tensor_default_15"], ["dequantize_per_tensor_default_100"])
-    submodule_3 = extract_subgraph(quantized_model, ["quantize_per_tensor_default_57"], ["dequantize_per_tensor_default_73"])
+
+    # submodule(切点按结构自动定位,不再硬编码节点名)
+    cuts = find_stage_cuts(quantized_model)
+    print(f"[cuts] {cuts}")
+    submodule_1 = extract_subgraph(quantized_model, [cuts[0][0]], [cuts[0][1]])
+    submodule_2 = extract_subgraph(quantized_model, [cuts[1][0]], [cuts[1][1]])
+    submodule_3 = extract_subgraph(quantized_model, [cuts[2][0]], [cuts[2][1]])
 
     def model3s_submodule_forward(x):
-        torch.ao.quantization.move_exported_model_to_eval(submodule_1)
-        torch.ao.quantization.move_exported_model_to_eval(submodule_2)
-        torch.ao.quantization.move_exported_model_to_eval(submodule_3)
+        move_exported_model_to_eval(submodule_1)
+        move_exported_model_to_eval(submodule_2)
+        move_exported_model_to_eval(submodule_3)
 
         x = submodule_1(x)
         x = submodule_2(x)
@@ -62,7 +108,7 @@ if __name__ == "__main__":
 
         return x
 
-    # 推理前 100 个数据，快速对比结果；要推理完整测试集设置 total_size=None
+    # 推理前 100 个 batch,快速对比结果;要推理完整测试集设置 total_size=None
     top1, top5 = evaluate(model.eval(), data_loader_test, total_size=100)
     top1_q, top5_q = evaluate(quantized_model, data_loader_test, total_size=100)
     top1_3ss, top5_3ss = evaluate(model3s_submodule_forward, data_loader_test, total_size=100)
@@ -71,8 +117,8 @@ if __name__ == "__main__":
     def to_float(t):
         assert isinstance(t, torch.Tensor)
         return t.cpu().numpy().tolist()
-    print(f"model1: top1:{to_float(top1.avg)}, top5:{to_float(top5.avg)}")
-    print(f"model3: top1:{to_float(top1_q.avg)}, top5:{to_float(top5_q.avg)}")
-    print(f"model5: top1:{to_float(top1_3ss.avg)}, top5:{to_float(top5_3ss.avg)}")
-
-    
+    print(f"model1(float, 参数与 prepared 共享已被 checkpoint 覆盖): top1:{to_float(top1.avg)}, top5:{to_float(top5.avg)}")
+    print(f"model3(完整量化):                      top1:{to_float(top1_q.avg)}, top5:{to_float(top5_q.avg)}")
+    print(f"model5(切子图分三段):                  top1:{to_float(top1_3ss.avg)}, top5:{to_float(top5_3ss.avg)}")
+    assert abs(top1_q.avg - top1_3ss.avg) < 0.5, "切子图分段推理与完整量化模型精度不一致!"
+    print("[OK] mode3 ≈ mode5,切子图分段推理与完整量化一致")
